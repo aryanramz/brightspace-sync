@@ -243,4 +243,4 @@ The crawler is intended for content visible to the signed-in user. It is not int
 
 ## License
 
-No open-source license has been selected yet. Until a license is added, normal copyright rules apply.
+Licensed under the [MIT License](LICENSE).
