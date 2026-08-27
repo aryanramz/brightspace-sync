@@ -248,336 +248,345 @@ function discoverFromMarkup(raw, map, baseUrl, source = 'course-selector-markup'
       addCourse(map, match[1], stripTags(match[2]), baseUrl, source);
     }
 
-    // Fallback for markup where the name is in an adjacent title/aria-label attribute.
-    const homeRe = /\/d2l\/home\/(\d+)/gi;
-    while ((match = homeRe.exec(markup))) {
-      const id = match[1];
-      const start = Math.max(0, match.index - 1200);
-      const end = Math.min(markup.length, match.index + 1800);
-      const window = markup.slice(start, end);
-      const attrs = [...window.matchAll(/(?:title|aria-label)=["']([^"']{3,300})["']/gi)].map(m => stripTags(m[1]));
-      const likely = attrs.find(x => /\b(Fall|Spring|Summer|Winter)\s+20\d{2}\b/i.test(x)) || attrs.sort((a, b) => b.length - a.length)[0] || '';
-      addCourse(map, id, likely, baseUrl, source);
+    // Fallback for markup where the anchor itself is incomplete in a partial.
+    const hrefRe = /href=["']([^"']*\/d2l\/home\/(\d+)[^"']*)["']/gi;
+    while ((match = hrefRe.exec(markup))) {
+      const id = match[2];
+      const around = markup.slice(Math.max(0, match.index - 700), Math.min(markup.length, match.index + 1700));
+      const title = around.match(/title=["']([^"']{2,500})["']/i);
+      const inner = around.match(/href=["'][^"']*\/d2l\/home\/\d+[^"']*["'][^>]*>([\s\S]{0,800}?)<\/a>/i);
+      addCourse(map, id, inner?.[1] || title?.[1] || '', baseUrl, source);
     }
+
+    const objectish = /["']?(?:OrgUnitId|orgUnitId)["']?\s*[:=]\s*["']?(\d+)["']?[\s\S]{0,700}?["']?(?:Name|name|Title|title)["']?\s*[:=]\s*["']([^"']{2,500})["']/gi;
+    while ((match = objectish.exec(markup))) addCourse(map, match[1], match[2], baseUrl, source);
   }
 }
 
-function selectorPayloadUrls(baseUrl) {
-  return [
-    new URL('/d2l/api/lp/1.47/enrollments/myenrollments/', baseUrl).href,
-    new URL('/d2l/api/lp/1.46/enrollments/myenrollments/', baseUrl).href,
-    new URL('/d2l/api/lp/1.45/enrollments/myenrollments/', baseUrl).href
-  ];
-}
-
-async function discoverViaApis(context, map, baseUrl) {
-  for (const url of selectorPayloadUrls(baseUrl)) {
-    try {
-      const response = await context.request.get(url, { timeout: 15000 });
-      if (!response.ok()) continue;
-      const text = await response.text();
-      let parsed;
-      try { parsed = JSON.parse(text); } catch { parsed = null; }
-      if (parsed) discoverFromJson(parsed, map, baseUrl, 'enrollments-api');
-      else discoverFromMarkup(text, map, baseUrl, 'enrollments-api-markup');
-      if (map.size) break;
-    } catch {}
-  }
-}
-
-async function discoverViaHomeDom(page, map, baseUrl) {
-  const links = await page.locator('a[href*="/d2l/home/"]').evaluateAll(nodes => nodes.map(a => ({ href: a.getAttribute('href') || '', text: (a.innerText || a.textContent || '').trim(), title: a.getAttribute('title') || '', aria: a.getAttribute('aria-label') || '' })) ).catch(() => []);
-  for (const link of links) {
-    const m = link.href.match(/\/d2l\/home\/(\d+)/i);
-    if (m) addCourse(map, m[1], link.text || link.aria || link.title, baseUrl, 'home-dom');
-  }
-}
-
-async function discoverViaSelectorNetwork(page, map, baseUrl, snapshotDir, config) {
-  const responses = [];
-  const handler = async response => {
-    const url = response.url();
-    if (!/course|orgunit|enroll|selector/i.test(url)) return;
-    try {
-      const ct = response.headers()['content-type'] || '';
-      if (!/json|html|text|d2l/i.test(ct)) return;
-      const text = await response.text();
-      if (!/\/d2l\/home\/\d+|OrgUnitId|orgUnitId/i.test(text)) return;
-      responses.push({ url, status: response.status(), contentType: ct, text: text.slice(0, 2_000_000) });
-      try {
-        const parsed = JSON.parse(text);
-        discoverFromJson(parsed, map, baseUrl, 'selector-network-json');
-      } catch {
-        discoverFromMarkup(text, map, baseUrl, 'selector-network-markup');
-      }
-    } catch {}
-  };
-  page.on('response', handler);
+async function tryAutoSubmitSavedBrowserLogin(page) {
   try {
-    const candidates = [
-      'd2l-navigation-s-course-menu',
-      'd2l-navigation-main-header',
-      '[data-testid*="course"]',
-      'button[aria-label*="course" i]',
-      'button[title*="course" i]'
-    ];
-    for (const selector of candidates) {
-      const locator = page.locator(selector).first();
-      if (!(await locator.count().catch(() => 0))) continue;
-      await locator.click({ force: true }).catch(() => {});
-      await page.waitForTimeout(config.dynamicWaitMs || 1800);
-      if (map.size) break;
+    // Chromium/Brave marks credentials supplied by its password manager with
+    // :-webkit-autofill. We intentionally inspect only that state; the crawler
+    // never reads the username/password values from the page.
+    return await page.evaluate(() => {
+      const password = document.querySelector('input[type="password"]');
+      if (!password) return { detected: false, submitted: false };
+
+      // Focusing can cause Chromium to apply a saved login on some SSO pages.
+      try { password.focus({ preventScroll: true }); } catch {}
+
+      let autofilled = false;
+      try { autofilled = password.matches(':-webkit-autofill'); } catch {}
+      if (!autofilled) return { detected: true, submitted: false };
+
+      const form = password.form || password.closest('form');
+      const submit = form?.querySelector('button[type="submit"], input[type="submit"], button:not([type])')
+        || document.querySelector('button[type="submit"], input[type="submit"]');
+      if (!submit || submit.disabled) return { detected: true, submitted: false };
+
+      submit.click();
+      return { detected: true, submitted: true };
+    });
+  } catch {
+    return { detected: false, submitted: false };
+  }
+}
+
+export async function waitForAuthenticatedHome(page, baseUrl, timeoutMs, authConfig = {}) {
+  await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs }).catch(() => {});
+
+  const isAuthenticated = async () => {
+    try {
+      return await page.locator('[data-prl*="/courseSelector/"], [data-cprl*="/courseSelector/"], a[href*="/d2l/home/"]').count() > 0;
+    } catch {
+      return false;
     }
-  } finally {
-    page.off('response', handler);
+  };
+
+  if (await isAuthenticated()) {
+    console.log('Existing Brightspace session found — continuing without login.');
+    return;
   }
-  if (responses.length) await writeJson(path.join(snapshotDir, '_course-selector-responses.json'), responses.map(r => ({ ...r, text: r.text.slice(0, 50000) })));
-}
 
-export async function discoverCourses(page, context, baseUrl, snapshotDir, config) {
-  const map = new Map();
-  await discoverViaHomeDom(page, map, baseUrl);
-  await discoverViaApis(context, map, baseUrl);
-  if (!map.size) await discoverViaSelectorNetwork(page, map, baseUrl, snapshotDir, config);
+  const autoSubmit = authConfig.autoSubmitSavedBrowserCredentials !== false;
+  const loginTimeoutMs = Number(authConfig.manualLoginTimeoutMs ?? 10 * 60 * 1000);
 
-  // Last-chance parse of the current page source catches server-rendered selector markup.
-  if (!map.size) {
-    const html = await page.content().catch(() => '');
-    discoverFromMarkup(html, map, baseUrl, 'home-html');
+  console.log('\nBrightspace login is required.');
+  if (autoSubmit) {
+    console.log('If Brave exposes a saved login as browser autofill, Brightspace Sync can attempt to submit it automatically.');
+    console.log('The crawler never reads, stores, or logs the password itself.');
   }
-  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
-}
+  console.log('If credentials are not saved/autofilled, complete the login manually in the Brave window.');
+  console.log('MFA/Duo approval is never bypassed and may still require you.');
+  console.log('The sync will continue automatically after Brightspace loads.\n');
 
-export async function waitForAuthenticatedHome(page, baseUrl, navigationTimeoutMs = 45000, auth = {}) {
-  const manualTimeout = Number(auth?.manualLoginTimeoutMs || 10 * 60 * 1000);
-  const autoSubmit = Boolean(auth?.autoSubmitSavedBrowserCredentials);
-  await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: navigationTimeoutMs }).catch(() => {});
   const started = Date.now();
-  while (Date.now() - started < manualTimeout) {
-    const url = page.url();
-    const body = await page.locator('body').innerText().catch(() => '');
-    const authenticated = /\/d2l\//i.test(url) && !/login|signin|saml|adfs|shibboleth|duo/i.test(url) && !/sign in|log in/i.test(body.slice(0, 2000));
-    if (authenticated) {
-      console.log('Existing Brightspace session found — continuing without login.');
+  let lastAssistAt = 0;
+  let announcedAutoSubmit = false;
+  while (Date.now() - started < loginTimeoutMs) {
+    await page.waitForTimeout(1200);
+
+    if (await isAuthenticated()) {
+      console.log('Brightspace authentication completed — continuing.');
       return;
     }
 
-    if (autoSubmit) {
-      const password = page.locator('input[type="password"]').first();
-      if (await password.count().catch(() => 0)) {
-        const autofilled = await password.evaluate(el => {
-          try { return el.matches(':-webkit-autofill'); } catch { return false; }
-        }).catch(() => false);
-        if (autofilled) {
-          const form = password.locator('xpath=ancestor::form[1]');
-          const button = form.locator('button[type="submit"], input[type="submit"], button').first();
-          if (await button.count().catch(() => 0)) {
-            await button.click().catch(() => {});
-            console.log('Saved Brave credentials detected via browser autofill — submitted the login form.');
-            await page.waitForTimeout(1200);
-            continue;
-          }
-        }
+    if (autoSubmit && Date.now() - lastAssistAt >= 3500) {
+      lastAssistAt = Date.now();
+      const assisted = await tryAutoSubmitSavedBrowserLogin(page);
+      if (assisted.submitted && !announcedAutoSubmit) {
+        announcedAutoSubmit = true;
+        console.log('Saved browser credentials detected via autofill — submitted the login form.');
       }
     }
-
-    if (Date.now() - started < 3000) console.log('Brightspace login is required. Complete your normal SSO/MFA flow in the browser window; the crawler will continue automatically afterward.');
-    await page.waitForTimeout(1000);
   }
-  throw new Error(`Brightspace login did not complete within ${Math.round(manualTimeout / 60000)} minute(s).`);
+  throw new Error(`Timed out waiting for Brightspace login (${Math.round(loginTimeoutMs / 60000)} minutes).`);
+}
+
+export async function discoverCourses(page, context, baseUrl, debugDir, config = {}) {
+  const map = new Map();
+
+  // 1) Direct visible links (works on many Brightspace deployments).
+  const visible = await page.locator('a[href*="/d2l/home/"]').evaluateAll(anchors => anchors.map(a => ({
+    href: a.href,
+    text: (a.innerText || a.textContent || '').trim(),
+    aria: a.getAttribute('aria-label') || '',
+    title: a.getAttribute('title') || ''
+  }))).catch(() => []);
+  for (const item of visible) {
+    const m = item.href.match(/\/d2l\/home\/(\d+)/i);
+    if (m) addCourse(map, m[1], item.text || item.aria || item.title, baseUrl, 'visible-home-link');
+  }
+
+  // 2) Many Brightspace nav layouts expose an authenticated Course Selector endpoint.
+  const selectorRoutes = await page.locator('[data-prl*="/courseSelector/"], [data-cprl*="/courseSelector/"]').evaluateAll(nodes => {
+    const out = [];
+    for (const n of nodes) {
+      for (const key of ['data-prl', 'data-cprl']) {
+        const v = n.getAttribute(key);
+        if (v && v.includes('/courseSelector/')) out.push(v);
+      }
+    }
+    return [...new Set(out)];
+  }).catch(() => []);
+
+  let rootOrgUnitId = null;
+  for (const route of selectorRoutes) {
+    const rm = route.match(/\/courseSelector\/(\d+)\//i);
+    if (rm) rootOrgUnitId = rm[1];
+    try {
+      const url = new URL(route, baseUrl).href;
+      const response = await context.request.get(url, { failOnStatusCode: false, timeout: config.navigationTimeoutMs || 45000 });
+      const raw = await response.text();
+      await ensureDir(debugDir);
+      await writeText(path.join(debugDir, `course-selector-${shortHash(url)}.raw.txt`), raw);
+      await writeJson(path.join(debugDir, `course-selector-${shortHash(url)}.meta.json`), {
+        url, status: response.status(), contentType: response.headers()['content-type'] || ''
+      });
+      discoverFromMarkup(raw, map, baseUrl, 'course-selector');
+      const jsonCandidate = raw.replace(/^\s*while\s*\(\s*1\s*\)\s*;\s*/i, '');
+      try { discoverFromJson(JSON.parse(jsonCandidate), map, baseUrl, 'course-selector-json'); } catch {}
+    } catch (error) {
+      await writeText(path.join(debugDir, 'course-selector-error.txt'), String(error?.stack || error));
+    }
+  }
+
+  // 3) The homepage calendar can expose course org-unit IDs even when
+  //    the My Courses widget is rendered in a way that page.content() misses.
+  const calendarCourses = await page.locator('a[href*="/d2l/le/calendar/"]').evaluateAll(anchors => anchors.map(a => {
+    const href = a.href || '';
+    const m = href.match(/\/d2l\/le\/calendar\/(\d+)\/event\//i);
+    if (!m) return null;
+    const li = a.closest('li');
+    const lines = (li?.innerText || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+    const courseLine = [...lines].reverse().find(x => /\b(Fall|Spring|Summer|Winter)\s+20\d{2}\b/i.test(x));
+    return { id: m[1], name: courseLine || '' };
+  }).filter(Boolean)).catch(() => []);
+  for (const c of calendarCourses) addCourse(map, c.id, c.name, baseUrl, 'homepage-calendar');
+
+  // 4) Generic org-unit IDs appearing anywhere in tool links.
+  const allLinks = await page.locator('a[href]').evaluateAll(anchors => anchors.map(a => ({
+    href: a.href || '',
+    text: (a.innerText || a.textContent || '').trim()
+  }))).catch(() => []);
+  for (const link of allLinks) {
+    const patterns = [
+      /\/d2l\/le\/content\/(\d+)/i,
+      /\/d2l\/le\/(\d+)\/discussions/i,
+      /\/d2l\/le\/calendar\/(\d+)/i,
+      /[?&]ou=(\d+)/i
+    ];
+    for (const p of patterns) {
+      const m = link.href.match(p);
+      if (m) addCourse(map, m[1], link.text, baseUrl, 'generic-tool-link');
+    }
+  }
+
+  // Do not treat the institution/home org unit as a course.
+  if (rootOrgUnitId) map.delete(String(rootOrgUnitId));
+
+  const courses = [...map.values()];
+  courses.sort((a, b) => a.name.localeCompare(b.name));
+  await writeJson(path.join(debugDir, 'discovered-courses.json'), { rootOrgUnitId, selectorRoutes, courses });
+  return courses;
+}
+
+async function extractRichBlocks(page) {
+  return page.locator('d2l-html-block[html]').evaluateAll(nodes => nodes.map((n, index) => {
+    const html = n.getAttribute('html') || '';
+    const holder = document.createElement('div');
+    holder.innerHTML = html;
+    return {
+      index,
+      html,
+      text: (holder.innerText || holder.textContent || '').replace(/\s+/g, ' ').trim()
+    };
+  }).filter(x => x.html || x.text)).catch(() => []);
+}
+
+async function extractLinks(page) {
+  return page.evaluate(() => {
+    const out = [];
+    const seen = new Set();
+    const add = (raw, text = '', title = '', download = false) => {
+      if (!raw) return;
+      try {
+        const href = new URL(raw, location.href).href;
+        const key = `${href}|${text}|${title}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push({ href, text: String(text || '').replace(/\s+/g, ' ').trim(), title: title || '', download: Boolean(download) });
+      } catch {}
+    };
+
+    for (const a of document.querySelectorAll('a[href]')) {
+      add(a.getAttribute('href'), a.innerText || a.textContent || '', a.getAttribute('title') || '', a.hasAttribute('download'));
+    }
+
+    // Brightspace stores announcement/instruction bodies inside the `html`
+    // attribute of d2l-html-block. Those anchors are not part of the live DOM,
+    // so collect them explicitly as well.
+    for (const block of document.querySelectorAll('d2l-html-block[html]')) {
+      const holder = document.createElement('div');
+      holder.innerHTML = block.getAttribute('html') || '';
+      for (const a of holder.querySelectorAll('a[href]')) {
+        add(a.getAttribute('href'), a.textContent || '', a.getAttribute('title') || '', a.hasAttribute('download'));
+      }
+    }
+    return out;
+  }).catch(() => []);
+}
+
+async function extractResourceCandidates(page) {
+  return page.evaluate(() => {
+    const out = [];
+    const seen = new Set();
+    const add = (raw, name = '', force = false, tag = '') => {
+      if (!raw || String(raw).toLowerCase().startsWith('data:')) return;
+      try {
+        const href = new URL(raw, location.href).href;
+        const key = `${href}|${String(tag || '').toLowerCase()}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push({
+          href,
+          name: String(name || '').replace(/\s+/g, ' ').trim(),
+          force,
+          tag: String(tag || '').toLowerCase()
+        });
+      } catch {}
+    };
+    const inspect = (root, inheritedName = '') => {
+      for (const n of root.querySelectorAll('a[href], [data-location], iframe[src], embed[src], object[data], source[src], track[src], img[src], video[src], audio[src]')) {
+        const title = n.getAttribute('data-title') || n.getAttribute('title') || inheritedName || (n.innerText || n.textContent || '').replace(/\s+/g, ' ').trim();
+        const tag = n.tagName || '';
+        const locationAttr = n.getAttribute('data-location');
+        if (locationAttr) add(locationAttr, title, true, tag);
+
+        const href = n.getAttribute('href');
+        if (href && !href.toLowerCase().startsWith('javascript:')) add(href, title, n.hasAttribute('download'), tag);
+
+        for (const attr of ['src', 'data']) {
+          const raw = n.getAttribute(attr);
+          if (!raw) continue;
+          add(raw, title, n.tagName === 'IMG' || n.tagName === 'TRACK', tag);
+          try {
+            const absolute = new URL(raw, location.href);
+            const embeddedFile = absolute.searchParams.get('file');
+            if (embeddedFile) add(decodeURIComponent(embeddedFile), title, true, tag);
+          } catch {}
+        }
+      }
+    };
+
+    inspect(document);
+    for (const block of document.querySelectorAll('d2l-html-block[html]')) {
+      const holder = document.createElement('div');
+      holder.innerHTML = block.getAttribute('html') || '';
+      inspect(holder, block.getAttribute('title') || '');
+    }
+    return out;
+  }).catch(() => []);
 }
 
 export async function buildCourseNav(course, baseUrl) {
   const nav = {};
-  for (const [section, makePath] of Object.entries(FALLBACK_ROUTES)) nav[section] = new URL(makePath(course.id), baseUrl).href;
+  for (const [section, builder] of Object.entries(FALLBACK_ROUTES)) {
+    nav[section] = new URL(builder(course.id), baseUrl).href;
+  }
   return nav;
 }
 
-function semanticText(text = '') {
-  return String(text)
-    .replace(/\r\n/g, '\n')
-    .replace(/[ \t]+$/gm, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+function shouldCaptureResponse(response) {
+  try {
+    const type = (response.headers()['content-type'] || '').toLowerCase();
+    const url = response.url();
+    const rt = response.request().resourceType();
+    return type.includes('application/json')
+      || /\/d2l\/api\//i.test(url)
+      || rt === 'xhr'
+      || rt === 'fetch';
+  } catch {
+    return false;
+  }
 }
 
-function normalizeCommonNoise(text = '') {
-  return semanticText(text)
-    .replace(/^\s*Listen\s*$/gim, '')
-    .replace(/^\s*More\s*$/gim, '')
-    .replace(/^\s*Last Visited.*$/gim, '')
-    .replace(/javascript:void\(0\);?/gi, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-async function pageSemanticSnapshot(page) {
-  const title = await page.title().catch(() => '');
-  const text = normalizeCommonNoise(await page.locator('body').innerText().catch(() => ''));
-  return { title, text, url: page.url() };
-}
-
-export async function savePageSnapshot(page, dir, stem = 'page', config = null, changeMeta = null) {
-  await ensureDir(dir);
-  const htmlFile = path.join(dir, `${stem}.html`);
-  const textFile = path.join(dir, `${stem}.txt`);
-  const jsonFile = path.join(dir, `${stem}.json`);
-
-  const beforeText = await readExistingText(textFile);
-  const beforeJson = await readExistingText(jsonFile);
-  const semantic = await pageSemanticSnapshot(page);
-  const nextText = semantic.text;
-  const nextJson = JSON.stringify(semantic, null, 2);
-  const textAction = await writeText(textFile, nextText);
-  const jsonAction = await writeText(jsonFile, nextJson);
-  const action = combinedAction([textAction, jsonAction]);
-  const html = await page.content().catch(() => '');
-  // HTML is kept for debugging, but it is intentionally not part of the
-  // incremental-change decision because Brightspace injects dynamic markup.
-  await writeText(htmlFile, html);
-
-  let diagnostic = null;
-  if (action === 'updated' && config) {
-    diagnostic = await writeUpdateDiagnostic(config, changeMeta || { type: 'page', title: semantic.title, url: semantic.url }, {
-      [`${stem}.txt`]: { before: beforeText, after: nextText },
-      [`${stem}.json`]: { before: beforeJson, after: nextJson }
-    });
-  }
-  return { action, text: semantic.text, title: semantic.title, finalUrl: semantic.url, diagnostic };
-}
-
-async function saveCalendarListSnapshot(page, dir, stem, courseId, config, changeMeta) {
-  await ensureDir(dir);
-  const textFile = path.join(dir, `${stem}.txt`);
-  const jsonFile = path.join(dir, `${stem}.json`);
-  const htmlFile = path.join(dir, `${stem}.html`);
-  const beforeText = await readExistingText(textFile);
-  const beforeJson = await readExistingText(jsonFile);
-
-  const links = await extractLinks(page).catch(() => []);
-  const events = [];
-  const seen = new Set();
-  for (const link of links) {
-    const key = sectionDetailKey('calendar', link.href, courseId, config.baseUrl);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    events.push({ key, label: normalizeCommonNoise(link.text || link.title || key), url: canonicalizeUrl(link.href, config.baseUrl) || link.href });
-  }
-  events.sort((a, b) => a.key.localeCompare(b.key));
-  const title = await page.title().catch(() => '');
-  const semanticTextValue = events.map(e => `${e.key}\n${e.label}\n${e.url}`).join('\n\n');
-  const semanticJson = { title, url: page.url(), events };
-  const nextJson = JSON.stringify(semanticJson, null, 2);
-  const textAction = await writeText(textFile, semanticTextValue);
-  const jsonAction = await writeText(jsonFile, nextJson);
-  const action = combinedAction([textAction, jsonAction]);
-  await writeText(htmlFile, await page.content().catch(() => ''));
-
-  let diagnostic = null;
-  if (action === 'updated' && config) {
-    diagnostic = await writeUpdateDiagnostic(config, changeMeta || { type: 'calendar-list', title, url: page.url() }, {
-      [`${stem}.txt`]: { before: beforeText, after: semanticTextValue },
-      [`${stem}.json`]: { before: beforeJson, after: nextJson }
-    });
-  }
-  return { action, text: semanticTextValue, title, finalUrl: page.url(), diagnostic };
-}
-
-async function saveAssignmentsListSnapshot(page, dir, stem, courseId, config, changeMeta) {
-  await ensureDir(dir);
-  const textFile = path.join(dir, `${stem}.txt`);
-  const jsonFile = path.join(dir, `${stem}.json`);
-  const htmlFile = path.join(dir, `${stem}.html`);
-  const beforeText = await readExistingText(textFile);
-  const beforeJson = await readExistingText(jsonFile);
-
-  const links = await extractLinks(page).catch(() => []);
-  const rows = [];
-  const seen = new Set();
-  for (const link of links) {
-    const key = sectionDetailKey('assignments', link.href, courseId, config.baseUrl);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    rows.push({ key, label: normalizeCommonNoise(link.text || link.title || key), url: canonicalizeUrl(link.href, config.baseUrl) || link.href });
-  }
-  rows.sort((a, b) => a.key.localeCompare(b.key));
-  const title = await page.title().catch(() => '');
-  const semanticTextValue = rows.map(e => `${e.key}\n${e.label}\n${e.url}`).join('\n\n');
-  const semanticJson = { title, url: page.url(), assignments: rows };
-  const nextJson = JSON.stringify(semanticJson, null, 2);
-  const textAction = await writeText(textFile, semanticTextValue);
-  const jsonAction = await writeText(jsonFile, nextJson);
-  const action = combinedAction([textAction, jsonAction]);
-  await writeText(htmlFile, await page.content().catch(() => ''));
-
-  let diagnostic = null;
-  if (action === 'updated' && config) {
-    diagnostic = await writeUpdateDiagnostic(config, changeMeta || { type: 'assignments-list', title, url: page.url() }, {
-      [`${stem}.txt`]: { before: beforeText, after: semanticTextValue },
-      [`${stem}.json`]: { before: beforeJson, after: nextJson }
-    });
-  }
-  return { action, text: semanticTextValue, title, finalUrl: page.url(), diagnostic };
-}
-
-async function saveAnnouncementsListSnapshot(page, dir, stem, courseId, config, changeMeta) {
-  await ensureDir(dir);
-  const textFile = path.join(dir, `${stem}.txt`);
-  const jsonFile = path.join(dir, `${stem}.json`);
-  const htmlFile = path.join(dir, `${stem}.html`);
-  const beforeText = await readExistingText(textFile);
-  const beforeJson = await readExistingText(jsonFile);
-
-  const links = await extractLinks(page).catch(() => []);
-  const rows = [];
-  const seen = new Set();
-  for (const link of links) {
-    const key = sectionDetailKey('announcements', link.href, courseId, config.baseUrl);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    rows.push({ key, label: normalizeCommonNoise(link.text || link.title || key), url: canonicalizeUrl(link.href, config.baseUrl) || link.href });
-  }
-  rows.sort((a, b) => a.key.localeCompare(b.key));
-  const title = await page.title().catch(() => '');
-  const semanticTextValue = rows.map(e => `${e.key}\n${e.label}\n${e.url}`).join('\n\n');
-  const semanticJson = { title, url: page.url(), announcements: rows };
-  const nextJson = JSON.stringify(semanticJson, null, 2);
-  const textAction = await writeText(textFile, semanticTextValue);
-  const jsonAction = await writeText(jsonFile, nextJson);
-  const action = combinedAction([textAction, jsonAction]);
-  await writeText(htmlFile, await page.content().catch(() => ''));
-
-  let diagnostic = null;
-  if (action === 'updated' && config) {
-    diagnostic = await writeUpdateDiagnostic(config, changeMeta || { type: 'announcements-list', title, url: page.url() }, {
-      [`${stem}.txt`]: { before: beforeText, after: semanticTextValue },
-      [`${stem}.json`]: { before: beforeJson, after: nextJson }
-    });
-  }
-  return { action, text: semanticTextValue, title, finalUrl: page.url(), diagnostic };
-}
-
-export async function attachNetworkCapture(page, dir, baseUrl, enabled = true) {
+export function attachNetworkCapture(page, networkDir, baseUrl, enabled = true) {
   if (!enabled) return async () => {};
-  await ensureDir(dir);
-  let seq = 0;
+  const baseOrigin = new URL(baseUrl).origin;
   const pending = new Set();
+
   const handler = response => {
     const job = (async () => {
       try {
-        const url = response.url();
-        if (new URL(url).origin !== new URL(baseUrl).origin) return;
-        const type = response.request().resourceType();
-        const ct = response.headers()['content-type'] || '';
-        if (!['xhr', 'fetch', 'document'].includes(type) && !/json|html|text/i.test(ct)) return;
-        const text = await response.text().catch(() => '');
-        const id = String(++seq).padStart(4, '0');
-        await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify({ url, status: response.status(), resourceType: type, contentType: ct, body: text.slice(0, 2_000_000) }, null, 2), 'utf8');
+        const u = new URL(response.url());
+        if (u.origin !== baseOrigin || !shouldCaptureResponse(response)) return;
+        const headers = response.headers();
+        const body = await response.body();
+        if (body.length > 10 * 1024 * 1024) return; // diagnostic cap per response
+        const contentType = (headers['content-type'] || '').toLowerCase();
+        let ext = '.bin';
+        if (contentType.includes('json')) ext = '.json';
+        else if (contentType.includes('html')) ext = '.html';
+        else if (contentType.includes('text/')) ext = '.txt';
+        const key = shortHash(`${response.request().method()} ${response.url()}`);
+        const file = path.join(networkDir, `${key}${ext}`);
+        await ensureDir(networkDir);
+        await writeBufferIfChanged(file, body);
+        await writeJson(path.join(networkDir, `${key}.meta.json`), {
+          url: response.url(),
+          method: response.request().method(),
+          resourceType: response.request().resourceType(),
+          status: response.status(),
+          contentType: headers['content-type'] || '',
+          size: body.length
+        });
       } catch {}
     })();
     pending.add(job);
     job.finally(() => pending.delete(job));
   };
+
   page.on('response', handler);
   return async () => {
     page.off('response', handler);
@@ -585,189 +594,608 @@ export async function attachNetworkCapture(page, dir, baseUrl, enabled = true) {
   };
 }
 
-async function extractLinks(page) {
-  return page.locator('a[href]').evaluateAll(nodes => nodes.map(a => ({ href: a.href, text: (a.innerText || a.textContent || '').trim(), title: a.getAttribute('title') || '' })));
+function normalizeSnapshotText(value = '') {
+  // Visiting a Brightspace Content topic updates its own activity metadata.
+  // That is crawler-induced state, not a professor/content change, so exclude it
+  // from the persistent mirror and from incremental change detection.
+  //
+  // Brightspace also renders two asynchronous UI-only controls near the course
+  // navigation: the overflow label `More` and the ReadSpeaker label `Listen`.
+  // Depending on viewport/layout timing, body.innerText can contain either, both,
+  // or neither even though the course data is identical. Diagnostics from v1.3
+  // showed that all 24 false updates were only these labels changing. Remove them
+  // only from the course-navigation header window, not from arbitrary course body
+  // content where the words could be meaningful.
+  let text = String(value).replace(/^\s*Last Visited[^\r\n]*$/gim, '');
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const header = lines.slice(0, 18).map(x => x.replace(/\u00a0/g, ' ').trim());
+  const navWords = /^(?:Course Home|Content|Assignments|Exams \/ Quizzes|Discussions|Class Progress|Grades|Learner Resources|Announcements|Syllabus|Email|FAQ|F\.A\.Q\.|Book Office Hours Meeting)$/i;
+  const looksLikeCourseChrome = header.filter(x => navWords.test(x)).length >= 2;
+  if (looksLikeCourseChrome) {
+    text = lines
+      .filter((line, i) => !(i < 18 && /^(?:More|Listen)$/i.test(line.replace(/\u00a0/g, ' ').trim())))
+      .join('\n');
+  }
+  return text
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
-function canonicalizeUrl(raw, baseUrl) {
-  if (!raw) return null;
+function normalizeSemanticLinks(links = []) {
+  // Brightspace injects several UI-only anchors asynchronously. The most common
+  // offender is ReadSpeaker's `Listen` control, which may appear or disappear
+  // between otherwise identical page loads and shifts the index of every later
+  // link. Non-navigational javascript:// / javascript:void(...) controls behave
+  // similarly (search toggles, grade-calculation toggles, language/logout menus).
+  //
+  // These links are browser chrome, not course content. Remove them from the
+  // semantic snapshot globally while keeping real HTTP(S) links, including
+  // announcement resources, documents, videos, quiz links, and other course URLs.
+  return links
+    .filter(link => {
+      const href = String(link?.href || '').trim();
+      const text = String(link?.text || '').replace(/\s+/g, ' ').trim();
+      const title = String(link?.title || '').replace(/\s+/g, ' ').trim();
+
+      if (/^javascript:/i.test(href)) return false;
+      if (/readspeaker\.com/i.test(href)) return false;
+      if (/^Listen$/i.test(text)) return false;
+      if (/Listen to this page using ReadSpeaker/i.test(title)) return false;
+      return true;
+    })
+    .map(link => ({
+      href: String(link.href || '').trim(),
+      text: String(link.text || '').replace(/\s+/g, ' ').trim(),
+      title: String(link.title || '').replace(/\s+/g, ' ').trim(),
+      download: Boolean(link.download)
+    }));
+}
+
+export async function savePageSnapshot(page, dir, label, config = null, meta = null) {
+  await ensureDir(dir);
+  const html = await page.content().catch(() => '');
+  const bodyText = normalizeSnapshotText(await page.locator('body').innerText().catch(() => ''));
+  const richBlocks = await extractRichBlocks(page);
+  const normalizedRichBlocks = richBlocks.map(x => ({ ...x, text: normalizeSnapshotText(x.text) }));
+  const richText = normalizedRichBlocks.map(x => x.text).filter(Boolean).join('\n\n');
+  const text = normalizeSnapshotText(richText && !bodyText.includes(richText) ? `${bodyText}\n\n[Embedded Brightspace content]\n${richText}` : bodyText);
+  const title = await page.title().catch(() => '');
+  const url = page.url();
+  const links = normalizeSemanticLinks(await extractLinks(page).catch(() => []));
+
+  const textFile = path.join(dir, `${label}.txt`);
+  const jsonFile = path.join(dir, `${label}.json`);
+  const htmlFile = path.join(dir, `${label}.html`);
+  const nextJson = JSON.stringify({ title, url, links, richBlocks: normalizedRichBlocks }, null, 2);
+  const beforeText = await readExistingText(textFile);
+  const beforeJson = await readExistingText(jsonFile);
+  const beforeHtml = await readExistingText(htmlFile);
+
+  // Treat visible text + navigable links as the semantic page state. Brightspace
+  // injects session/CSRF values into raw HTML, so hashing raw HTML directly would
+  // make an unchanged page look different on every run. Only refresh the HTML
+  // snapshot when the semantic state actually changed.
+  const textAction = await writeText(textFile, text);
+  const jsonAction = await writeText(jsonFile, nextJson);
+  const semanticAction = combinedAction([textAction, jsonAction]);
+  if (semanticAction !== 'unchanged') await writeText(htmlFile, html);
+
+  let diagnostic = null;
+  if (semanticAction === 'updated' && config && meta) {
+    diagnostic = await writeUpdateDiagnostic(config, meta, {
+      [`${label}.txt`]: { before: beforeText, after: text },
+      [`${label}.json`]: { before: beforeJson, after: nextJson },
+      [`${label}.html`]: { before: beforeHtml, after: html }
+    });
+  }
+  return { action: semanticAction, diagnostic };
+}
+
+function normalizeCalendarSnapshotText(value = '') {
+  // The Brightspace calendar landing page is a live "today" view. It regenerates
+  // the selected date, 24 hourly grid rows, and task-entry controls even when the
+  // underlying course calendar has not changed. Those UI-only values made every
+  // course calendar look modified on every sync.
+  const month = '(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)';
+  const dateOnly = new RegExp(`^${month}\\s+\\d{1,2},\\s+\\d{4}$`, 'i');
+  const timeOnly = /^\d{1,2}:\d{2}\s*(?:AM|PM)$/i;
+  const ignored = /^(?:Calendar Day View|Calendar View Modes|AgendaDayWeekMonthList|Agenda|Day|Week|Month|List|More|Listen|Previous|Next|Clear Selection|all day|Tasks|Add a task\.\.\.)$/i;
+
+  return normalizeSnapshotText(value)
+    .split(/\r?\n/)
+    .map(line => line.replace(/\u00a0/g, ' ').trim())
+    .filter(line => line && !dateOnly.test(line) && !timeOnly.test(line) && !ignored.test(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+
+function normalizeAssignmentListText(value = '') {
+  // Keep assignment names, due dates, scores/status, and other student-visible
+  // assignment information, but drop the generic account/navigation chrome that
+  // can be re-rendered in a different order between otherwise identical loads.
+  // The assignment detail links below provide stable assignment identity.
+  const ignored = /^(?:Profile|My Portfolio|Notifications|Account Settings|Progress|English \(United States\)|Log Out|Course Home|Content|Assignments|Exams \/ Quizzes|Discussions|Class Progress|Grades|Learner Resources|More|Listen|skip to main content)$/i;
+  return normalizeSnapshotText(value)
+    .split(/\r?\n/)
+    .map(line => line.replace(/\u00a0/g, ' ').trim())
+    .filter(line => line && !ignored.test(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function saveAssignmentsListSnapshot(page, dir, label, courseId, config = null, meta = null) {
+  await ensureDir(dir);
+  const html = await page.content().catch(() => '');
+  const rawText = await page.locator('body').innerText().catch(() => '');
+  const text = normalizeAssignmentListText(rawText);
+  const title = await page.title().catch(() => '');
+  const url = page.url();
+  const allLinks = await extractLinks(page).catch(() => []);
+
+  // Generic Brightspace navigation/account links can change order or contain
+  // session-specific query values. For the assignment index, only assignment
+  // detail links are semantically meaningful. Canonicalize them to the stable
+  // Dropbox assignment id (`db`) plus course id (`ou`).
+  const assignments = [];
+  const seen = new Set();
+  for (const link of allLinks) {
+    try {
+      const u = new URL(link.href, url);
+      if (!/\/d2l\/lms\/dropbox\/user\/folder_submit_files\.d2l$/i.test(u.pathname)) continue;
+      const db = u.searchParams.get('db');
+      const ou = u.searchParams.get('ou');
+      if (!db || ou !== String(courseId)) continue;
+      const key = String(db);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      assignments.push({
+        id: key,
+        href: new URL(`/d2l/lms/dropbox/user/folder_submit_files.d2l?db=${encodeURIComponent(key)}&ou=${encodeURIComponent(String(courseId))}`, url).href,
+        text: link.text || '',
+        title: link.title || ''
+      });
+    } catch {}
+  }
+  assignments.sort((a, b) => `${a.id}|${a.text}`.localeCompare(`${b.id}|${b.text}`));
+
+  const textFile = path.join(dir, `${label}.txt`);
+  const jsonFile = path.join(dir, `${label}.json`);
+  const htmlFile = path.join(dir, `${label}.html`);
+  const nextJson = JSON.stringify({ title, url, assignments }, null, 2);
+  const beforeText = await readExistingText(textFile);
+  const beforeJson = await readExistingText(jsonFile);
+  const beforeHtml = await readExistingText(htmlFile);
+  const textAction = await writeText(textFile, text);
+  const jsonAction = await writeText(jsonFile, nextJson);
+  const semanticAction = combinedAction([textAction, jsonAction]);
+  if (semanticAction !== 'unchanged') await writeText(htmlFile, html);
+  let diagnostic = null;
+  if (semanticAction === 'updated' && config && meta) {
+    diagnostic = await writeUpdateDiagnostic(config, meta, {
+      [`${label}.txt`]: { before: beforeText, after: text },
+      [`${label}.json`]: { before: beforeJson, after: nextJson },
+      [`${label}.html`]: { before: beforeHtml, after: html }
+    });
+  }
+  return { action: semanticAction, diagnostic };
+}
+
+function normalizeAnnouncementListText(value = '') {
+  // Keep the student-visible announcement list/body text, but strip the same
+  // asynchronous course/navigation chrome handled by generic snapshots. The
+  // announcement identities themselves are canonicalized separately below.
+  return normalizeSnapshotText(value);
+}
+
+async function saveAnnouncementsListSnapshot(page, dir, label, courseId, config = null, meta = null) {
+  await ensureDir(dir);
+  const html = await page.content().catch(() => '');
+  const rawText = await page.locator('body').innerText().catch(() => '');
+  const text = normalizeAnnouncementListText(rawText);
+  const title = await page.title().catch(() => '');
+  const url = page.url();
+  const allLinks = await extractLinks(page).catch(() => []);
+
+  // Brightspace injects/removes ReadSpeaker and search/navigation controls on
+  // this page asynchronously. That changes the position of every later link in
+  // the raw `links` array even when no announcement changed. For the index page,
+  // only actual announcement detail links are semantic. Canonicalize those to
+  // stable announcement ids and stable URLs; announcement bodies/external links
+  // are captured independently by the detail-page crawler.
+  const announcements = [];
+  const seen = new Set();
+  const newsPath = new RegExp(`^/d2l/le/news/${courseId}/(\\d+)/view/?$`, 'i');
+  for (const link of allLinks) {
+    try {
+      const u = new URL(link.href, url);
+      const m = u.pathname.match(newsPath);
+      if (!m) continue;
+      const id = String(m[1]);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      announcements.push({
+        id,
+        href: new URL(`/d2l/le/news/${encodeURIComponent(String(courseId))}/${encodeURIComponent(id)}/view?ou=${encodeURIComponent(String(courseId))}`, url).href,
+        text: link.text || '',
+        title: link.title || ''
+      });
+    } catch {}
+  }
+  announcements.sort((a, b) => `${a.id}|${a.text}`.localeCompare(`${b.id}|${b.text}`));
+
+  const textFile = path.join(dir, `${label}.txt`);
+  const jsonFile = path.join(dir, `${label}.json`);
+  const htmlFile = path.join(dir, `${label}.html`);
+  const nextJson = JSON.stringify({ title, url, announcements }, null, 2);
+  const beforeText = await readExistingText(textFile);
+  const beforeJson = await readExistingText(jsonFile);
+  const beforeHtml = await readExistingText(htmlFile);
+  const textAction = await writeText(textFile, text);
+  const jsonAction = await writeText(jsonFile, nextJson);
+  const semanticAction = combinedAction([textAction, jsonAction]);
+  if (semanticAction !== 'unchanged') await writeText(htmlFile, html);
+
+  let diagnostic = null;
+  if (semanticAction === 'updated' && config && meta) {
+    diagnostic = await writeUpdateDiagnostic(config, meta, {
+      [`${label}.txt`]: { before: beforeText, after: text },
+      [`${label}.json`]: { before: beforeJson, after: nextJson },
+      [`${label}.html`]: { before: beforeHtml, after: html }
+    });
+  }
+  return { action: semanticAction, diagnostic };
+}
+
+async function saveCalendarListSnapshot(page, dir, label, courseId, config = null, meta = null) {
+  await ensureDir(dir);
+  const html = await page.content().catch(() => '');
+  const rawText = await page.locator('body').innerText().catch(() => '');
+  const text = normalizeCalendarSnapshotText(rawText);
+  const title = await page.title().catch(() => '');
+  const url = page.url();
+  const allLinks = await extractLinks(page).catch(() => []);
+
+  // Only event links are semantically meaningful to the calendar itself. The
+  // normal page also contains a huge account/course-selector menu whose order and
+  // generated controls can change independently of calendar data.
+  const eventPath = new RegExp(`/d2l/le/calendar/${courseId}/event/\\d+`, 'i');
+  const eventLinks = allLinks
+    .filter(link => {
+      try { return eventPath.test(new URL(link.href).pathname); } catch { return false; }
+    })
+    .map(link => ({ href: link.href, text: link.text, title: link.title }))
+    .sort((a, b) => `${a.href}|${a.text}`.localeCompare(`${b.href}|${b.text}`));
+
+  const textFile = path.join(dir, `${label}.txt`);
+  const jsonFile = path.join(dir, `${label}.json`);
+  const htmlFile = path.join(dir, `${label}.html`);
+  const nextJson = JSON.stringify({ title, url, events: eventLinks }, null, 2);
+  const beforeText = await readExistingText(textFile);
+  const beforeJson = await readExistingText(jsonFile);
+  const beforeHtml = await readExistingText(htmlFile);
+  const textAction = await writeText(textFile, text);
+  const jsonAction = await writeText(jsonFile, nextJson);
+  const semanticAction = combinedAction([textAction, jsonAction]);
+  if (semanticAction !== 'unchanged') await writeText(htmlFile, html);
+  let diagnostic = null;
+  if (semanticAction === 'updated' && config && meta) {
+    diagnostic = await writeUpdateDiagnostic(config, meta, {
+      [`${label}.txt`]: { before: beforeText, after: text },
+      [`${label}.json`]: { before: beforeJson, after: nextJson },
+      [`${label}.html`]: { before: beforeHtml, after: html }
+    });
+  }
+  return { action: semanticAction, diagnostic };
+}
+
+
+function stableAssetUrl(raw) {
   try {
-    const u = new URL(raw, baseUrl);
-    if (!['http:', 'https:'].includes(u.protocol)) return null;
+    const u = new URL(raw);
     u.hash = '';
-    for (const key of [...u.searchParams.keys()]) if (/^(d2l_|_?cb|cache|timestamp|ts)$/i.test(key)) u.searchParams.delete(key);
+    const volatile = /^(?:token|access_token|auth|authorization|signature|sig|expires?|exp|jwt|session(?:id)?|sid|timestamp|ts|cache|cb|nonce|state|code|x-amz-.+|x-goog-.+)$/i;
+    for (const key of [...u.searchParams.keys()]) {
+      if (volatile.test(key)) u.searchParams.delete(key);
+    }
+    const entries = [...u.searchParams.entries()].sort(([a, av], [b, bv]) => `${a}=${av}`.localeCompare(`${b}=${bv}`));
+    u.search = '';
+    for (const [k, v] of entries) u.searchParams.append(k, v);
     return u.href;
-  } catch { return null; }
+  } catch {
+    return String(raw || '');
+  }
 }
 
-function contentUrlBelongs(url, courseId, baseUrl) {
-  if (!url) return false;
-  try {
-    const u = new URL(url);
-    if (u.origin !== new URL(baseUrl).origin) return false;
-    const p = u.pathname;
-    return new RegExp(`/d2l/le/content/${courseId}/`, 'i').test(p)
-      || (p.includes('/d2l/le/content/') && u.searchParams.get('ou') === String(courseId));
-  } catch { return false; }
-}
-
-function assetKind(url, contentType = '') {
-  const lowerUrl = String(url).toLowerCase();
-  const ct = String(contentType).toLowerCase();
-  if (/\.(vtt|srt)(?:$|[?#])/i.test(lowerUrl) || /text\/vtt|application\/x-subrip/.test(ct)) return 'transcript';
-  if (/video\//.test(ct) || /\.(mp4|webm|mov|m4v)(?:$|[?#])/i.test(lowerUrl)) return 'video';
-  if (/audio\//.test(ct) || /\.(mp3|m4a|wav|ogg)(?:$|[?#])/i.test(lowerUrl)) return 'audio';
-  if (/image\//.test(ct) || /\.(png|jpe?g|gif|webp|svg)(?:$|[?#])/i.test(lowerUrl)) return 'image';
-  if (/\.(zip|7z|rar|tar|gz)(?:$|[?#])/i.test(lowerUrl) || /application\/(zip|x-7z-compressed|x-rar-compressed)/.test(ct)) return 'archive';
-  if (/pdf|msword|officedocument|powerpoint|excel|spreadsheet|text\/plain|text\/csv/.test(ct)
-      || /\.(pdf|docx?|pptx?|xlsx?|csv|txt|rtf)(?:$|[?#])/i.test(lowerUrl)) return 'document';
+function assetKindFrom(url, contentType = '', tag = '') {
+  const u = String(url || '').toLowerCase();
+  const t = String(contentType || '').split(';')[0].trim().toLowerCase();
+  const element = String(tag || '').toLowerCase();
+  if (element === 'track' || /\.(vtt|srt|ttml)(?:$|[?#])/i.test(u) || /text\/(?:vtt|srt)/i.test(t)) return 'transcript';
+  if (element === 'video' || /\.(mp4|mov|m4v|webm|avi|mkv|wmv)(?:$|[?#])/i.test(u) || t.startsWith('video/')) return 'video';
+  if (element === 'audio' || /\.(mp3|m4a|wav|aac|ogg|flac)(?:$|[?#])/i.test(u) || t.startsWith('audio/')) return 'audio';
+  if (element === 'img' || /\.(png|jpe?g|gif|webp|svg|bmp|tiff?)(?:$|[?#])/i.test(u) || t.startsWith('image/')) return 'image';
+  if (/\.(pdf|docx?|pptx?|xlsx?|csv|txt|rtf|odt|ods|odp)(?:$|[?#])/i.test(u)
+      || /application\/(?:pdf|msword|rtf|vnd\.ms-|vnd\.openxmlformats-officedocument)/i.test(t)
+      || /^text\/(?:plain|csv)$/i.test(t)) return 'document';
+  if (/\.(zip|7z|rar|tar|gz)(?:$|[?#])/i.test(u) || /application\/(?:zip|x-7z-compressed|x-rar-compressed|gzip)/i.test(t)) return 'archive';
+  if (element === 'iframe' || element === 'embed' || element === 'object') return 'embed';
   return 'other';
 }
 
-function shouldDownloadAsset(kind, policy, sectionConfig) {
-  if (sectionConfig?._allowAssetDownloadsInCurrentSection === false) return false;
-  if (kind === 'video') return Boolean(policy.downloadVideo);
-  if (kind === 'audio') return Boolean(policy.downloadAudio);
-  if (kind === 'transcript') return policy.downloadTranscripts !== false;
-  if (kind === 'image') return policy.downloadImages !== false;
-  if (kind === 'archive') return policy.downloadArchives !== false;
-  if (kind === 'document') return policy.downloadDocuments !== false;
+function assetPolicy(config = {}) {
+  const p = config.assetPolicy || {};
+  return {
+    downloadDocuments: p.downloadDocuments ?? true,
+    downloadImages: p.downloadImages ?? true,
+    downloadTranscripts: p.downloadTranscripts ?? true,
+    downloadArchives: p.downloadArchives ?? true,
+    downloadVideo: p.downloadVideo ?? false,
+    downloadAudio: p.downloadAudio ?? false,
+    maxDownloadBytes: Number(p.maxDownloadBytes ?? 25 * 1024 * 1024),
+    indexExternalAssets: p.indexExternalAssets ?? true
+  };
+}
+
+function shouldDownloadAsset(kind, policy) {
+  if (kind === 'document') return policy.downloadDocuments;
+  if (kind === 'image') return policy.downloadImages;
+  if (kind === 'transcript') return policy.downloadTranscripts;
+  if (kind === 'archive') return policy.downloadArchives;
+  if (kind === 'video') return policy.downloadVideo;
+  if (kind === 'audio') return policy.downloadAudio;
   return false;
 }
 
-async function filenameForResponse(response, url) {
-  const headers = response.headers();
-  const disposition = headers['content-disposition'] || '';
-  const contentType = headers['content-type'] || '';
-  let name = filenameFromDisposition(disposition);
-  if (!name) {
-    try { name = decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() || 'file'); } catch { name = 'file'; }
+async function probeResource(context, href, baseUrl, timeoutMs) {
+  const url = new URL(href, baseUrl);
+  const sameOrigin = url.origin === new URL(baseUrl).origin;
+  if (!sameOrigin) return { sameOrigin, url: url.href, contentType: '', contentLength: null, disposition: '' };
+  try {
+    const response = await context.request.head(url.href, { timeout: timeoutMs, failOnStatusCode: false });
+    const headers = response.headers();
+    const rawLength = headers['content-length'];
+    const contentLength = rawLength && /^\d+$/.test(rawLength) ? Number(rawLength) : null;
+    return {
+      sameOrigin,
+      url: url.href,
+      status: response.status(),
+      contentType: headers['content-type'] || '',
+      contentLength,
+      disposition: headers['content-disposition'] || ''
+    };
+  } catch {
+    return { sameOrigin, url: url.href, contentType: '', contentLength: null, disposition: '' };
   }
-  if (!path.extname(name)) name += extensionFromContentType(contentType);
-  return safeName(name, `file-${shortHash(url)}`);
 }
 
-async function fetchAsset(context, url, outDir, policy, sectionConfig) {
-  const result = { url, downloaded: false };
+async function downloadLink(context, href, suggestedName, targetDir, baseUrl, timeoutMs, probe = null, maxDownloadBytes = Infinity) {
   try {
-    const response = await context.request.get(url, { timeout: sectionConfig.downloadTimeoutMs || 60000 });
-    result.status = response.status();
-    result.contentType = response.headers()['content-type'] || '';
-    result.kind = assetKind(url, result.contentType);
-    result.name = await filenameForResponse(response, url);
-    const length = Number(response.headers()['content-length'] || 0);
-    result.size = length || null;
+    const url = new URL(href, baseUrl);
+    if (url.origin !== new URL(baseUrl).origin) return null;
+    if (probe?.contentLength != null && probe.contentLength > maxDownloadBytes) return null;
 
-    if (!response.ok()) { result.skipReason = `HTTP ${response.status()}`; return result; }
-    if (!shouldDownloadAsset(result.kind, policy, sectionConfig)) { result.skipReason = 'policy-index-only'; return result; }
-    const max = Number(policy.maxDownloadBytes || 25 * 1024 * 1024);
-    if (length && length > max) { result.skipReason = `content-length>${max}`; return result; }
+    const response = await context.request.get(url.href, {
+      timeout: timeoutMs,
+      failOnStatusCode: false
+    });
+    if (!response.ok()) return null;
+
+    const headers = response.headers();
+    const contentType = headers['content-type'] || '';
+    const disposition = headers['content-disposition'] || '';
+    const lowerType = contentType.toLowerCase();
+    if (lowerType.includes('text/html') && !disposition.toLowerCase().includes('attachment')) return null;
 
     const body = await response.body();
-    result.size = body.length;
-    if (body.length > max) { result.skipReason = `body>${max}`; return result; }
-    await ensureDir(outDir);
-    const file = path.join(outDir, result.name);
-    const action = await writeBufferIfChanged(file, body);
-    result.downloaded = true;
-    result.localFile = result.name;
-    result.action = action;
-    return result;
-  } catch (error) {
-    result.skipReason = error.message;
-    return result;
+    if (body.length > maxDownloadBytes) return null;
+
+    let filename = filenameFromDisposition(disposition);
+    if (!filename) {
+      const pathnameName = decodeURIComponent(url.pathname.split('/').pop() || 'file');
+      filename = suggestedName || pathnameName;
+    }
+    filename = safeName(filename, `file-${shortHash(url.href)}`);
+    if (!path.extname(filename)) filename += extensionFromContentType(contentType);
+    if (!path.extname(filename)) filename += '.bin';
+
+    const final = path.join(targetDir, `${shortHash(url.href)}-${filename}`);
+    await ensureDir(targetDir);
+    const action = await writeBufferIfChanged(final, body);
+    return { url: url.href, file: path.basename(final), size: body.length, contentType, action };
+  } catch {
+    return null;
   }
 }
 
-async function syncVisibleResources(page, context, outDir, manifestFile, baseUrl, downloadTimeoutMs, config) {
-  const links = await extractLinks(page).catch(() => []);
-  const urls = new Map();
-  for (const link of links) {
-    const u = canonicalizeUrl(link.href, baseUrl);
-    if (!u) continue;
-    if (isLikelyDownload(u) || /viewcontent|download|content\/enforced|file/i.test(u)) urls.set(u, link.text || link.title || '');
-  }
-  const media = await page.locator('video[src], audio[src], source[src], track[src]').evaluateAll(nodes => nodes.map(n => ({ url: n.src || n.getAttribute('src') || '', label: n.getAttribute('label') || n.getAttribute('title') || '' }))).catch(() => []);
-  for (const item of media) {
-    const u = canonicalizeUrl(item.url, baseUrl);
-    if (u) urls.set(u, item.label || '');
-  }
-
-  const policy = config.assetPolicy || {};
-  const assets = [];
+export async function syncVisibleResources(page, context, targetDir, manifestFile, baseUrl, timeoutMs, config = {}) {
+  const candidates = await extractResourceCandidates(page).catch(() => []);
+  const results = [];
   const downloads = [];
-  for (const [url, label] of urls) {
-    let record;
-    try {
-      const sameOrigin = new URL(url).origin === new URL(baseUrl).origin;
-      if (!sameOrigin) {
-        if (policy.indexExternalAssets !== false) assets.push({ url, label, kind: assetKind(url, ''), downloaded: false, skipReason: 'external-index-only' });
-        continue;
-      }
-      record = await fetchAsset(context, url, outDir, policy, { ...config, downloadTimeoutMs });
-      if (!record.name && label) record.name = label;
-      assets.push(record);
-      if (record.downloaded) downloads.push({ url, file: record.localFile, action: record.action });
-    } catch (error) {
-      assets.push({ url, label, downloaded: false, skipReason: error.message, kind: assetKind(url, '') });
-    }
-  }
+  const seen = new Set();
+  const policy = assetPolicy(config);
+  let existingAssets = [];
+  try { existingAssets = JSON.parse((await readExistingText(manifestFile)) || '[]'); } catch {}
+  const previousByUrl = new Map((Array.isArray(existingAssets) ? existingAssets : []).filter(x => x?.url).map(x => [x.url, x]));
 
-  const beforeManifest = await readExistingText(manifestFile);
-  const nextManifest = JSON.stringify(assets, null, 2);
-  const manifestAction = await writeText(manifestFile, nextManifest);
-  let manifestDiagnostic = null;
-  if (manifestAction === 'updated' && config) {
-    manifestDiagnostic = await writeUpdateDiagnostic(config, { type: 'assets-index', title: path.basename(manifestFile), url: page.url() }, {
-      [path.basename(manifestFile)]: { before: beforeManifest, after: nextManifest }
+  for (const item of candidates) {
+    const structuralResource = item.force
+      || ['iframe', 'embed', 'object', 'source', 'track', 'img', 'video', 'audio'].includes(item.tag)
+      || isLikelyDownload(item.href);
+    if (seen.has(item.href)) continue;
+    seen.add(item.href);
+
+    const candidateUrl = new URL(item.href, baseUrl);
+    const sameOrigin = candidateUrl.origin === new URL(baseUrl).origin;
+    const preliminaryKind = assetKindFrom(item.href, '', item.tag);
+    const preliminaryDownloadEligible = shouldDownloadAsset(preliminaryKind, policy)
+      || (preliminaryKind === 'other' && item.force && isLikelyDownload(item.href));
+    // Avoid extra network traffic for media/embed assets that are index-only by
+    // policy. Probe headers only when they can affect a download decision.
+    let probe = (sameOrigin && preliminaryDownloadEligible)
+      ? await probeResource(context, item.href, baseUrl, timeoutMs)
+      : { sameOrigin, url: candidateUrl.href, contentType: '', contentLength: null, disposition: '' };
+    let kind = assetKindFrom(item.href, probe.contentType, item.tag);
+    // Unknown same-origin links should only be treated as downloadable when the
+    // URL itself looks like a file/download endpoint. This avoids fetching whole
+    // HTML pages merely because they appeared in an embed element.
+    const downloadEligible = shouldDownloadAsset(kind, policy)
+      || (kind === 'other' && item.force && isLikelyDownload(item.href));
+    const tooLarge = probe.contentLength != null && probe.contentLength > policy.maxDownloadBytes;
+    let saved = null;
+
+    if (probe.sameOrigin && downloadEligible && !tooLarge) {
+      const quickAllowed = config.syncMode !== 'quick' || config._allowAssetDownloadsInCurrentSection === true;
+      if (quickAllowed) {
+        saved = await downloadLink(context, item.href, item.name, targetDir, baseUrl, timeoutMs, probe, policy.maxDownloadBytes);
+        if (saved) downloads.push(saved);
+      }
+    }
+
+    if (!probe.sameOrigin && !policy.indexExternalAssets) continue;
+    const stableUrl = stableAssetUrl(probe.url);
+    const previous = previousByUrl.get(stableUrl);
+    let downloaded = Boolean(saved);
+    let localFile = saved?.file || null;
+    if (!downloaded && previous?.downloaded && previous?.localFile) {
+      try {
+        await fs.access(path.join(targetDir, previous.localFile));
+        downloaded = true;
+        localFile = previous.localFile;
+      } catch {}
+    }
+    results.push({
+      url: stableUrl,
+      name: item.name || previous?.name || '',
+      element: item.tag || previous?.element || '',
+      kind,
+      sameOrigin: probe.sameOrigin,
+      contentType: probe.contentType || previous?.contentType || '',
+      contentLength: probe.contentLength ?? previous?.contentLength ?? null,
+      downloaded,
+      localFile,
+      skipReason: downloaded ? null
+        : !probe.sameOrigin ? 'external-link-only'
+          : tooLarge ? 'over-size-limit'
+            : (kind === 'video' || kind === 'audio') && !shouldDownloadAsset(kind, policy) ? 'large-media-index-only'
+              : !downloadEligible ? 'not-downloadable-by-policy'
+                : config.syncMode === 'quick' && config._allowAssetDownloadsInCurrentSection !== true ? 'deferred-until-full-sync'
+                  : 'download-unavailable'
     });
   }
-  return { assets, downloads, assetAction: manifestAction, diagnostic: manifestDiagnostic };
+
+  const assetAction = await writeJson(manifestFile, results);
+  return { assets: results, downloads, assetAction };
+}
+
+// Backward-compatible export name used by older call sites. v1.2 call sites use
+// syncVisibleResources so every page gets an asset index even when media is not
+// downloaded.
+export async function downloadVisibleResources(page, context, targetDir, baseUrl, timeoutMs, config = {}) {
+  const manifestFile = path.join(targetDir, '_assets.json');
+  const result = await syncVisibleResources(page, context, targetDir, manifestFile, baseUrl, timeoutMs, config);
+  return result.downloads;
+}
+
+function canonicalizeUrl(raw, baseUrl) {
+  try {
+    const u = new URL(raw, baseUrl);
+    u.hash = '';
+    return u.href;
+  } catch { return raw; }
+}
+
+function contentUrlBelongs(url, courseId, baseUrl) {
+  try {
+    const u = new URL(url, baseUrl);
+    if (u.origin !== new URL(baseUrl).origin) return false;
+    const p = u.pathname.toLowerCase();
+    return p.includes(`/d2l/le/content/${courseId}`.toLowerCase())
+      || p.includes(`/d2l/le/lessons/${courseId}`.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 async function crawlInteractiveContentModules(page, context, course, contentDir, config) {
-  const moduleLinks = page.locator('a[href^="javascript:"]');
-  const count = Math.min(await moduleLinks.count().catch(() => 0), Number(config.maxInteractiveModulesPerCourse || 80));
-  const discoveredUrls = [];
-  let visitedModules = 0;
-  for (let i = 0; i < count; i++) {
-    const link = moduleLinks.nth(i);
-    const label = normalizeCommonNoise(await link.innerText().catch(() => '')) || `module-${i + 1}`;
-    if (!label || /^listen$|^more$/i.test(label)) continue;
-    await link.click({ force: true }).catch(() => {});
-    await page.waitForTimeout(700);
-    visitedModules += 1;
-    const moduleKey = `${String(visitedModules).padStart(3, '0')}-${safeName(label).slice(0, 80)}`;
-    const moduleDir = path.join(contentDir, 'Modules', moduleKey);
-    const changeMeta = { courseId: course.id, course: course.name, type: 'content-module', id: moduleKey, title: label, url: page.url() };
-    const snapshot = await savePageSnapshot(page, moduleDir, 'page', config, changeMeta);
-    recordChange(config, { action: snapshot.action, ...changeMeta, diagnostic: snapshot.diagnostic });
-    const assets = await syncVisibleResources(page, context, path.join(moduleDir, 'Files'), path.join(moduleDir, 'assets.json'), config.baseUrl, config.downloadTimeoutMs, config);
-    recordChange(config, { action: assets.assetAction, courseId: course.id, course: course.name, type: 'assets-index', id: moduleKey, title: label, url: page.url() });
-    for (const d of assets.downloads) recordChange(config, { action: d.action, courseId: course.id, course: course.name, type: 'file', title: d.file, url: d.url });
-    const links = await extractLinks(page).catch(() => []);
-    for (const item of links) {
-      const u = canonicalizeUrl(item.href, config.baseUrl);
-      if (contentUrlBelongs(u, course.id, config.baseUrl)) discoveredUrls.push(u);
-    }
+  const modules = await page.locator('li[data-key*="ContentObject.ModuleCO-"]').evaluateAll(items => items.map(li => {
+    const key = li.getAttribute('data-key') || '';
+    const m = key.match(/ModuleCO-(\d+)/i);
+    const anchor = li.querySelector(':scope > a');
+    const labelNode = li.querySelector('[id^="TreeItem"] .d2l-textblock:not(.d2l-offscreen)');
+    const label = (labelNode?.textContent || anchor?.innerText || '').replace(/\s+/g, ' ').trim();
+    return m ? { key, moduleId: m[1], label } : null;
+  }).filter(Boolean)).catch(() => []);
+
+  const unique = [];
+  const seen = new Set();
+  for (const m of modules) {
+    if (seen.has(m.moduleId)) continue;
+    seen.add(m.moduleId);
+    unique.push(m);
   }
-  await writeJson(path.join(contentDir, '_modules.json'), { modules: visitedModules, discoveredUrls: [...new Set(discoveredUrls)] });
-  return { modules: visitedModules, urls: [...new Set(discoveredUrls)] };
+
+  const discoveredUrls = new Set();
+  const index = [];
+  const limit = Math.min(unique.length, Number(config.maxInteractiveModulesPerCourse || 80));
+
+  for (let i = 0; i < limit; i++) {
+    const mod = unique[i];
+    const key = String(i + 1).padStart(4, '0');
+    const modDir = path.join(contentDir, 'Modules', `${key}-${safeName(mod.label || `Module ${mod.moduleId}`)}`);
+    const networkDir = path.join(modDir, '_network');
+    const stopCapture = attachNetworkCapture(page, networkDir, config.baseUrl, config.captureNetwork !== false);
+
+    const clicked = await page.evaluate(moduleKey => {
+      const li = [...document.querySelectorAll('li[data-key]')].find(x => x.getAttribute('data-key') === moduleKey);
+      const a = li?.querySelector(':scope > a');
+      if (!a) return false;
+      a.click();
+      return true;
+    }, mod.key).catch(() => false);
+
+    if (!clicked) {
+      await stopCapture();
+      continue;
+    }
+
+    await page.waitForTimeout(config.dynamicWaitMs || 1800);
+    const changeMeta = { courseId: course.id, course: course.name, type: 'content-module', id: mod.moduleId, title: mod.label || `Module ${mod.moduleId}`, url: page.url() };
+    const snapshot = await savePageSnapshot(page, modDir, 'page', config, changeMeta);
+    const snapshotAction = snapshot.action;
+    recordChange(config, { action: snapshotAction, ...changeMeta, diagnostic: snapshot.diagnostic });
+    const assets = await syncVisibleResources(page, context, path.join(modDir, 'Files'), path.join(modDir, 'assets.json'), config.baseUrl, config.downloadTimeoutMs, config);
+    const downloads = assets.downloads;
+    recordChange(config, { action: assets.assetAction, courseId: course.id, course: course.name, type: 'assets-index', id: mod.moduleId, title: mod.label || `Module ${mod.moduleId}`, url: page.url() });
+    const links = await extractLinks(page).catch(() => []);
+    for (const link of links) {
+      if (contentUrlBelongs(link.href, course.id, config.baseUrl)) discoveredUrls.add(canonicalizeUrl(link.href, config.baseUrl));
+    }
+    for (const d of downloads) recordChange(config, { action: d.action, courseId: course.id, course: course.name, type: 'file', title: d.file, url: d.url });
+    index.push({ ...mod, snapshot: path.relative(contentDir, modDir), snapshotAction, downloads: downloads.length, discoveredContentUrls: links.filter(l => contentUrlBelongs(l.href, course.id, config.baseUrl)).map(l => l.href) });
+    await stopCapture();
+  }
+
+  await writeJson(path.join(contentDir, '_modules.json'), index);
+  return { modules: index.length, urls: [...discoveredUrls] };
 }
 
-export async function crawlContent(page, context, course, contentUrl, courseDir, config) {
+export async function crawlContent(page, context, course, startUrl, courseDir, config) {
   const contentDir = path.join(courseDir, 'Content');
-  await ensureDir(contentDir);
-  const queue = [contentUrl];
+  const queue = [canonicalizeUrl(startUrl, config.baseUrl)];
   const visited = new Set();
   const index = [];
-  let interactiveDone = false;
   let interactiveModules = 0;
+  let interactiveDone = false;
 
-  while (queue.length && visited.size < Number(config.maxContentPagesPerCourse || 300)) {
+  while (queue.length && visited.size < config.maxContentPagesPerCourse) {
     const url = canonicalizeUrl(queue.shift(), config.baseUrl);
-    if (!url || visited.has(url) || !contentUrlBelongs(url, course.id, config.baseUrl)) continue;
+    if (!url || visited.has(url)) continue;
     visited.add(url);
+
+    console.log(`    content ${visited.size}: ${url}`);
     const pageKey = String(visited.size).padStart(4, '0');
     const snapshotDir = path.join(contentDir, 'Pages');
     const networkDir = path.join(contentDir, '_network', pageKey);
