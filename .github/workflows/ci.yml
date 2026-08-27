@@ -38,5 +38,8 @@ jobs:
       - name: Lock self-test
         run: npm run lock-selftest
 
+      - name: School indexes self-test
+        run: npm run school-indexes-selftest
+
       - name: Security self-test
         run: npm run security-selftest
