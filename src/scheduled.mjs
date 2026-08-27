@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { absoluteFrom, exists } from './utils.mjs';
 
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG_FILE = path.join(ROOT, 'config.json');
 const EXAMPLE_FILE = path.join(ROOT, 'config.example.json');
