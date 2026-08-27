@@ -1,0 +1,153 @@
+name: Publish v2.4.0
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-v2.4.0.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: Prepare v2.4.0 files
+        shell: python
+        run: |
+          from pathlib import Path
+
+          version_files = [
+              'package.json',
+              'QUICK_SYNC.cmd',
+              'FULL_SYNC.cmd',
+              'START_HERE.cmd',
+              'SETUP_LOGIN.cmd',
+              'SCHEDULED_SYNC.cmd',
+              'PUBLISH_TO_DRIVE.cmd',
+              'src/index.mjs',
+              'src/scheduled.mjs',
+          ]
+
+          for name in version_files:
+              p = Path(name)
+              s = p.read_text(encoding='utf-8')
+              assert '2.3.0' in s, f'Expected 2.3.0 in {name}'
+              p.write_text(s.replace('2.3.0', '2.4.0'), encoding='utf-8')
+
+          p = Path('README.md')
+          s = p.read_text(encoding='utf-8')
+          old = 'The sync digest turns raw change metadata into a compact cross-course summary of what was added or updated during the latest run. Student-facing changes are grouped separately from technical mirror changes such as asset-index/file updates.'
+          new = old + '\n\nIt also performs deadline-change intelligence by comparing the newly generated deadline set with the previous sync. The digest can identify newly dated work, due-date/time changes, and deadline removals while avoiding false "deadline removed" reports when an item itself disappears from Brightspace.'
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = 'npm run school-indexes-selftest\nnpm run security-selftest'
+          new = 'npm run school-indexes-selftest\nnpm run deadline-intelligence-selftest\nnpm run asset-index-selftest\nnpm run security-selftest'
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = 'Latest stable release: **[v2.2.0](https://github.com/aryanramz/brightspace-sync/releases/tag/v2.2.0)**'
+          new = 'Latest stable release: **[v2.4.0](https://github.com/aryanramz/brightspace-sync/releases/tag/v2.4.0)**'
+          assert old in s
+          s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+
+          p = Path('RELEASE_NOTES.md')
+          old_notes = p.read_text(encoding='utf-8')
+          new_notes = '''# v2.4.0
+
+Deadline-change intelligence for cross-course deadline tracking.
+
+## Highlights
+
+- Compares the current normalized deadline set against the previous sync before the upcoming index is overwritten.
+- Detects due-date and due-time changes with structured `before` and `after` values.
+- Detects newly dated assignments, quizzes, and calendar-backed work.
+- Detects deadline removal only when the item itself still exists, avoiding false positives when an item is removed entirely.
+- Adds a dedicated **Deadline changes** section to `sync-digest.md`.
+- Adds structured `deadlineChanges` entries and counts to `sync-digest.json`.
+- Applies deadline intelligence to both school-wide and active-term digests.
+- Adds `npm run deadline-intelligence-selftest` and CI coverage for moved, added, removed, disappeared-item, and first-run baseline cases.
+- Keeps unchanged Quick Syncs stable: no Brightspace changes and no deadline changes are reported when the LMS state is unchanged.
+
+## Validation
+
+The new deadline-intelligence self-test passes, and a live unchanged Quick Sync produced `0 added`, `0 updated`, `33` upcoming deadlines, `0` deadline changes, `0` digest entries, and a successful incremental Drive publish.
+
+No migration is required for existing installs. Existing `config.json`, `.brightspace-profile/`, and `BrightspaceMirror/` remain local and are not replaced by release files.
+
+'''
+          p.write_text(new_notes + old_notes, encoding='utf-8')
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Syntax check
+        shell: bash
+        run: for f in src/*.mjs; do node --check "$f"; done
+
+      - name: Run regression suite
+        run: |
+          npm run selftest
+          npm run publish-selftest
+          npm run lock-selftest
+          npm run school-indexes-selftest
+          npm run deadline-intelligence-selftest
+          npm run asset-index-selftest
+          npm run security-selftest
+
+      - name: Commit v2.4.0
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json README.md RELEASE_NOTES.md QUICK_SYNC.cmd FULL_SYNC.cmd START_HERE.cmd SETUP_LOGIN.cmd SCHEDULED_SYNC.cmd PUBLISH_TO_DRIVE.cmd src/index.mjs src/scheduled.mjs
+          git commit -m "Release v2.4.0"
+          git push
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v2.4.0 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "v2.4.0 already exists; nothing to do."
+            exit 0
+          fi
+
+          cat > release-notes.md <<'EOF'
+          # v2.4.0
+
+          Deadline-change intelligence for cross-course deadline tracking.
+
+          ## Highlights
+
+          - Detects assignment, quiz, and calendar deadline changes by comparing normalized deadlines across syncs.
+          - Reports exact before → after due-date/time changes in the human-readable sync digest.
+          - Detects newly dated work and removed deadlines.
+          - Avoids false deadline-removal alerts when the underlying Brightspace item itself disappears.
+          - Adds structured `deadlineChanges` data and counts to `sync-digest.json`.
+          - Applies the same intelligence to school-wide and active-term digests.
+          - Adds a dedicated regression suite covering moved, added, removed, disappeared-item, and first-run baseline behavior.
+
+          ## Validation
+
+          The regression suite passes on Node.js, and a live unchanged Quick Sync produced zero Brightspace changes, zero deadline changes, 33 upcoming deadlines, zero digest entries, and a successful incremental Google Drive publish.
+
+          No migration is required for existing installs. Existing `config.json`, `.brightspace-profile/`, and `BrightspaceMirror/` remain local and are not replaced by release files.
+          EOF
+
+          sha=$(git rev-parse HEAD)
+          gh release create v2.4.0 \
+            --repo "${{ github.repository }}" \
+            --target "$sha" \
+            --title "Brightspace Sync v2.4.0" \
+            --notes-file release-notes.md
