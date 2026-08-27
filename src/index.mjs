@@ -22,6 +22,7 @@ import {
   waitForAuthenticatedHome
 } from './crawler.mjs';
 import { writeProjectViews } from './status.mjs';
+import { writeSchoolIndexes } from './school-indexes.mjs';
 import { publishMirrorToDrive, resolveDrivePublishConfig } from './publish.mjs';
 import { acquireSyncLock, describeActiveLock } from './sync-lock.mjs';
 
@@ -332,9 +333,12 @@ async function runSync(mode) {
     }
 
     await writeProjectViews(config, manifest, config._changes, mode, completedAt);
+    const schoolIndexes = await writeSchoolIndexes(config, manifest, config._changes, mode, completedAt);
 
     console.log(`\nChanges: ${manifest.changeSummary.added} added, ${manifest.changeSummary.updated} updated.`);
     if (!config._changes.length) console.log('No Brightspace content changes detected.');
+    console.log(`Upcoming deadlines indexed: ${schoolIndexes.upcoming.count}.`);
+    console.log(`Sync digest entries: ${schoolIndexes.digest.summary.total}.`);
     console.log(`Duration: ${manifest.durationSeconds}s (${mode} mode)`);
     console.log(`Sync complete. Mirror written to:\n${config.outputDir}`);
 
