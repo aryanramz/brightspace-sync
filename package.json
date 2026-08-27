@@ -14,6 +14,7 @@
     "publish-selftest": "node src/publish-selftest.mjs",
     "lock-selftest": "node src/lock-selftest.mjs",
     "school-indexes-selftest": "node src/school-indexes-selftest.mjs",
+    "asset-index-selftest": "node src/asset-index-selftest.mjs",
     "scheduled": "node src/scheduled.mjs",
     "setup-login": "node src/login-setup.mjs",
     "security-selftest": "node src/security-selftest.mjs"
