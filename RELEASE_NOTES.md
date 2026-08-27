@@ -10,7 +10,8 @@ Security, privacy, dependency-reproducibility, and Windows portability hardening
 - Added regression tests for the write guard.
 - Replaced Brave-only browser lookup with shared Windows detection for Brave, Google Chrome, and Microsoft Edge, while preserving manual `browserExecutablePath` support.
 - Added a Windows environment doctor and a GitHub-hosted `windows-latest` browser smoke test that launches an installed Chromium browser through Playwright with a temporary persistent profile.
-- Pinned Playwright to 1.55.0 and committed `package-lock.json` for reproducible installs.
+- Pinned Playwright to 1.55.1, patching the high-severity SSL-certificate verification advisory affecting versions below 1.55.1, and committed `package-lock.json` for reproducible installs.
+- Added a high-severity runtime dependency audit gate to CI.
 - Switched CI/setup/first-run launcher dependency installation to `npm ci`.
 - Expanded current-tree privacy scanning to cover common secret formats, institution-email patterns, student-ID-like fields, personal Windows paths, unsafe public defaults, and accidental standalone auth-state exports.
 - Added a full-Git-history security test that verifies sensitive runtime paths were never committed and scans reachable commits for common credential/academic-PII patterns.
@@ -18,7 +19,7 @@ Security, privacy, dependency-reproducibility, and Windows portability hardening
 
 ## Validation
 
-Release validation requires all Linux Node.js 20/22 functional/security jobs, the full-history security scan, and the `windows-latest` browser smoke job to pass before merge/release.
+Release validation requires all Linux Node.js 20/22 functional/security jobs, the dependency vulnerability audit, the full-history security scan, and the `windows-latest` browser smoke job to pass before merge/release.
 
 No mirror migration is required. Existing `config.json`, `.brightspace-profile/`, and `BrightspaceMirror/` remain local. The only security cleanup is automatic removal of the legacy plaintext `_brightspace-auth-state.json` backup if it exists.
 
