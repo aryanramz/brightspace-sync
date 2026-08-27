@@ -13,5 +13,9 @@
       "termKey": "2026-Fall",
       "status": "active"
     }
-  ]
+  ],
+  "upcomingFile": "_school/upcoming.json",
+  "upcomingMarkdownFile": "_school/upcoming.md",
+  "syncDigestFile": "_school/sync-digest.json",
+  "syncDigestMarkdownFile": "_school/sync-digest.md"
 }
