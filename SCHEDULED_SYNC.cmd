@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-echo Brightspace Sync v2.4.0 - SCHEDULED DAILY RUN
+echo Brightspace Sync v2.4.1 - SCHEDULED DAILY RUN
 where node >nul 2>nul
 if errorlevel 1 (
   echo.
@@ -11,8 +11,8 @@ if errorlevel 1 (
 )
 if not exist config.json copy /Y config.example.json config.json >nul
 if not exist node_modules (
-  echo Installing dependencies...
-  call npm install
+  echo Installing locked dependencies...
+  call npm ci --no-audit --no-fund
   if errorlevel 1 goto :error
 )
 echo.
