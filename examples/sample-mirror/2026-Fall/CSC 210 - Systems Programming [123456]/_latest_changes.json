@@ -1,0 +1,15 @@
+{
+  "generatedAt": "2026-09-08T20:15:42.000Z",
+  "changes": [
+    {
+      "at": "2026-09-08T20:15:31.000Z",
+      "termKey": "2026-Fall",
+      "courseId": "123456",
+      "course": "CSC 210 - Systems Programming - Fall 2026",
+      "action": "added",
+      "type": "assignments-list",
+      "title": "assignments",
+      "url": "https://your-school.brightspace.com/d2l/lms/dropbox/user/folders_list.d2l?ou=123456"
+    }
+  ]
+}
