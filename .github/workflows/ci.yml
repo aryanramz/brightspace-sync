@@ -21,9 +21,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+          cache: npm
 
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
 
       - name: Syntax check
         shell: bash
@@ -46,6 +47,60 @@ jobs:
 
       - name: Asset index self-test
         run: npm run asset-index-selftest
+
+      - name: Write-protection self-test
+        run: npm run write-protection-selftest
+
+      - name: Security self-test
+        run: npm run security-selftest
+
+  history-security:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Scan full Git history for sensitive material
+        run: npm run history-security-selftest
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Syntax check
+        shell: pwsh
+        run: Get-ChildItem src\*.mjs | ForEach-Object { node --check $_.FullName }
+
+      - name: Windows environment doctor
+        run: npm run doctor
+
+      - name: Launch installed Chromium with persistent Playwright profile
+        run: npm run windows-browser-smoke
+
+      - name: Write-protection self-test
+        run: npm run write-protection-selftest
 
       - name: Security self-test
         run: npm run security-selftest
