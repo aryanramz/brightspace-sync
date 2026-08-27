@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ensureDir, writeJson, writeText } from './utils.mjs';
+import { buildDeadlineIntelligence } from './deadline-intelligence.mjs';
 
 const MONTHS = new Map([
   ['jan', 0], ['january', 0], ['feb', 1], ['february', 1], ['mar', 2], ['march', 2],
@@ -346,7 +347,7 @@ function normalizeDigestChange(change) {
   };
 }
 
-export function buildSyncDigest(changes, mode, completedAt, activeTerms = []) {
+export function buildSyncDigest(changes, mode, completedAt, activeTerms = [], deadlineChanges = []) {
   const seen = new Set();
   const normalized = [];
   for (const raw of changes || []) {
@@ -369,11 +370,13 @@ export function buildSyncDigest(changes, mode, completedAt, activeTerms = []) {
       added: normalized.filter(x => x.action === 'added').length,
       updated: normalized.filter(x => x.action === 'updated').length,
       studentFacing: studentFacing.length,
-      technical: technical.length
+      technical: technical.length,
+      deadlineChanges: deadlineChanges.length
     },
     changes: normalized,
     studentFacing,
-    technical
+    technical,
+    deadlineChanges
   };
 }
 
@@ -396,6 +399,44 @@ function formatDigestSection(lines, title, items) {
   lines.push('');
 }
 
+function deadlineChangeLabel(kind) {
+  if (kind === 'deadline-added') return 'New deadline';
+  if (kind === 'deadline-removed') return 'Deadline removed';
+  return 'Deadline changed';
+}
+
+function deadlineDisplay(snapshot) {
+  if (!snapshot) return 'none';
+  if (snapshot.dueAt) {
+    return new Date(snapshot.dueAt).toLocaleString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit'
+    });
+  }
+  return snapshot.dueDate || snapshot.dueText || 'unknown';
+}
+
+function formatDeadlineChangeSection(lines, items) {
+  lines.push('## Deadline changes', '');
+  let lastCourse = null;
+  for (const item of items) {
+    const course = item.course || 'School-wide';
+    if (course !== lastCourse) {
+      lastCourse = course;
+      lines.push(`### ${course}`, '');
+    }
+    const label = deadlineChangeLabel(item.kind);
+    const url = item.url ? ` — ${item.url}` : '';
+    if (item.kind === 'deadline-added') {
+      lines.push(`- **${label}** — ${item.title} — ${deadlineDisplay(item.after)}${url}`);
+    } else if (item.kind === 'deadline-removed') {
+      lines.push(`- **${label}** — ${item.title} — was ${deadlineDisplay(item.before)}${url}`);
+    } else {
+      lines.push(`- **${label}** — ${item.title} — ${deadlineDisplay(item.before)} → ${deadlineDisplay(item.after)}${url}`);
+    }
+  }
+  lines.push('');
+}
+
 function formatDigestMarkdown(digest) {
   const lines = [
     '# Sync Digest',
@@ -403,15 +444,19 @@ function formatDigestMarkdown(digest) {
     `Generated: ${digest.generatedAt}`,
     `Mode: ${digest.syncMode}`,
     `Changes: ${digest.summary.total} total (${digest.summary.added} added, ${digest.summary.updated} updated)`,
+    `Deadline changes: ${digest.summary.deadlineChanges || 0}`,
     ''
   ];
-  if (!digest.changes.length) {
-    lines.push('No mirror changes were detected in this sync.', '');
+  if (!digest.changes.length && !digest.deadlineChanges.length) {
+    lines.push('No mirror or deadline changes were detected in this sync.', '');
     return lines.join('\n');
   }
-  formatDigestSection(lines, 'Added', digest.studentFacing.filter(x => x.action === 'added'));
-  formatDigestSection(lines, 'Updated', digest.studentFacing.filter(x => x.action === 'updated'));
-  if (digest.technical.length) formatDigestSection(lines, 'Technical mirror changes', digest.technical);
+  if (digest.deadlineChanges.length) formatDeadlineChangeSection(lines, digest.deadlineChanges);
+  if (digest.changes.length) {
+    formatDigestSection(lines, 'Added', digest.studentFacing.filter(x => x.action === 'added'));
+    formatDigestSection(lines, 'Updated', digest.studentFacing.filter(x => x.action === 'updated'));
+    if (digest.technical.length) formatDigestSection(lines, 'Technical mirror changes', digest.technical);
+  }
   return lines.join('\n');
 }
 
@@ -427,6 +472,7 @@ async function writeIndexSet(dir, upcoming, digest) {
 
 export async function writeSchoolIndexes(config, manifest, changes, mode, completedAt) {
   const schoolDir = path.join(config.outputDir, '_school');
+  const previousUpcoming = await readJson(path.join(schoolDir, 'upcoming.json'), null);
   const asOf = new Date(completedAt).getTime();
   const all = [];
 
@@ -443,7 +489,8 @@ export async function writeSchoolIndexes(config, manifest, changes, mode, comple
     all.push(...calendarDeadlines(status, courseMeta));
   }
 
-  const upcomingItems = sortDeadlineItems(dedupeDeadlines(all).filter(item => {
+  const allDeadlines = dedupeDeadlines(all);
+  const upcomingItems = sortDeadlineItems(allDeadlines.filter(item => {
     const time = item.dueAt ? Date.parse(item.dueAt) : new Date(`${item.dueDate}T23:59:59`).getTime();
     return Number.isFinite(time) && time >= asOf - 60 * 1000;
   }));
@@ -456,13 +503,27 @@ export async function writeSchoolIndexes(config, manifest, changes, mode, comple
     count: upcomingItems.length,
     items: upcomingItems
   };
-  const digest = buildSyncDigest(changes, mode, completedAt, manifest.activeTerms || []);
+  const deadlineIntelligence = await buildDeadlineIntelligence({
+    previousUpcoming,
+    currentDeadlines: allDeadlines,
+    currentUpcoming: upcomingItems,
+    manifest,
+    completedAt
+  });
+  const deadlineChanges = deadlineIntelligence.changes;
+  const digest = buildSyncDigest(changes, mode, completedAt, manifest.activeTerms || [], deadlineChanges);
   await writeIndexSet(schoolDir, upcoming, digest);
 
   for (const term of manifest.activeTerms || []) {
     const termUpcomingItems = upcomingItems.filter(item => item.term?.key === term.key);
     const termUpcoming = { ...upcoming, activeTerms: [term], count: termUpcomingItems.length, items: termUpcomingItems };
-    const termDigest = buildSyncDigest((changes || []).filter(x => x.termKey === term.key), mode, completedAt, [term]);
+    const termDigest = buildSyncDigest(
+      (changes || []).filter(x => x.termKey === term.key),
+      mode,
+      completedAt,
+      [term],
+      deadlineChanges.filter(x => x.termKey === term.key)
+    );
     await writeIndexSet(path.join(schoolDir, term.key), termUpcoming, termDigest);
   }
 
@@ -476,5 +537,5 @@ export async function writeSchoolIndexes(config, manifest, changes, mode, comple
     syncDigestMarkdownFile: '_school/sync-digest.md'
   });
 
-  return { upcoming, digest };
+  return { upcoming, digest, deadlineChanges };
 }
