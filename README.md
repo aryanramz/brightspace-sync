@@ -1,14 +1,31 @@
 # Brightspace Sync
 
-Brightspace Sync is a read-focused authenticated crawler and incremental course-mirroring pipeline for D2L Brightspace.
+[![CI](https://github.com/aryanramz/brightspace-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/aryanramz/brightspace-sync/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/aryanramz/brightspace-sync)](https://github.com/aryanramz/brightspace-sync/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-green.svg)](https://nodejs.org/)
 
-It uses a persistent Chromium/Brave browser profile to reuse an authenticated Brightspace session, discovers courses dynamically, captures student-visible course data, maintains a term-scoped local mirror, tracks changes, and can optionally publish the mirror to a Google Drive for desktop folder for downstream search or AI workflows.
+**Keep a structured, term-aware local mirror of the Brightspace content you can already access.**
+
+Brightspace Sync is a read-focused authenticated crawler and incremental course-mirroring pipeline for D2L Brightspace. It uses Playwright with a persistent Chromium/Brave profile, discovers courses dynamically, captures student-visible course data, tracks meaningful changes, and optionally publishes the mirror to a Google Drive for desktop folder for downstream search or AI workflows.
 
 > This project is unofficial and is not affiliated with, endorsed by, or supported by D2L or any educational institution. Users are responsible for complying with their institution's policies, applicable terms of service, and copyright rules.
 
+## Why this exists
+
+Brightspace is useful as a live LMS, but less convenient as a durable personal archive or machine-readable knowledge source. Brightspace Sync turns the student-visible parts of an account into a predictable filesystem structure that can be searched, diffed, archived by semester, or connected to downstream tooling.
+
+Typical use cases include:
+
+- keeping a personal semester archive
+- checking what changed since the last sync
+- searching course material outside the LMS UI
+- feeding a private course mirror into retrieval or AI tooling
+- maintaining a local copy of assignments, announcements, course content, and supported files
+
 ## Highlights
 
-- Persistent browser-based authentication with normal SSO/MFA when required
+- Persistent browser-session reuse with normal SSO/MFA when required
 - Dynamic course discovery
 - Quick and Full synchronization modes
 - Term-aware historical archive structure
@@ -21,40 +38,51 @@ It uses a persistent Chromium/Brave browser profile to reuse an authenticated Br
 - Windows launchers and Task Scheduler friendly operation
 - Local status, manifest, and change metadata for downstream tooling
 
-## What it is
+## Architecture
 
-A typical flow is:
-
-```text
-Brightspace
-    ↓
-Playwright + persistent Brave/Chromium profile
-    ↓
-Course discovery and read-focused crawling
-    ↓
-Structured local mirror
-    ↓
-Change detection and term archive
-    ↓
-Optional incremental Drive publish
-    ↓
-Search, archival, or AI tooling
+```mermaid
+flowchart LR
+    A[Brightspace] --> B[Playwright + persistent Chromium profile]
+    B --> C[Course discovery]
+    C --> D[Read-focused crawling]
+    D --> E[Structured term-scoped mirror]
+    E --> F[Change detection + status metadata]
+    F --> G[Optional Drive publish]
+    E --> H[Search / archive / AI tooling]
+    G --> H
 ```
 
 This is closer to an authenticated synchronization pipeline than a one-off scraper.
 
-## Important safety notes
+## Example output
 
-Brightspace Sync is designed to avoid submissions, edits, and other intentional state-changing operations. However, visiting Brightspace pages can still update normal platform metadata such as viewed state or "Last Visited" information.
+The repository includes a **fully synthetic sample mirror** so you can inspect the output format without exposing real course or student data:
 
-Do not commit or share:
+[`examples/sample-mirror/`](examples/sample-mirror/)
 
-- `.brightspace-profile/` — browser cookies, sessions, and potentially saved-login information
-- `BrightspaceMirror/` — private student/course content
-- `config.json` — local machine configuration
-- logs or exported data that contain private academic information
+```text
+BrightspaceMirror/
+├── 2026-Fall/
+│   └── CSC 210 - Systems Programming [123456]/
+│       ├── _course.json
+│       ├── _course_status.json
+│       ├── _latest_changes.json
+│       └── assignments/
+│           └── page.txt
+├── _school/
+└── _system/
+```
 
-These paths are ignored by the included `.gitignore`.
+Example Quick Sync behavior:
+
+```text
+Existing Brightspace session found — continuing without login.
+Sync mode: QUICK
+Courses discovered: 6
+Changes: 1 added, 0 updated
+Drive publish: 3 copied, 2284 unchanged, 0 failed
+Sync complete.
+```
 
 ## Requirements
 
@@ -66,9 +94,11 @@ These paths are ignored by the included `.gitignore`.
 
 ## Quick start
 
-1. Install dependencies:
+1. Clone the repository and install dependencies:
 
    ```powershell
+   git clone https://github.com/aryanramz/brightspace-sync.git
+   cd brightspace-sync
    npm install
    ```
 
@@ -124,25 +154,17 @@ The project does not require username or password fields in `config.json`.
 
 ### Quick Sync
 
-Designed for routine use. It checks high-value changing areas such as:
-
-- assignments
-- quizzes
-- grades
-- calendar
-- announcements
-
-It intentionally skips the deepest Content/module/discussion crawling for speed.
+Designed for routine use. It checks high-value changing areas such as assignments, quizzes, grades, calendar, and announcements while skipping the deepest Content/module/discussion crawling for speed.
 
 ### Full Sync
 
-Performs a deeper crawl including course Content/modules, discussions, and supported assets.
+Performs a deeper crawl including course Content/modules, discussions, supported assets, and additional verification work.
 
-The scheduled launcher can automatically choose between Quick and Full based on the age of the last successful Full sync.
+`SCHEDULED_SYNC.cmd` can automatically choose between Quick and Full based on the age of the last successful Full sync.
 
 ## Mirror layout
 
-The mirror uses a term-scoped schema:
+The local mirror uses a term-scoped schema:
 
 ```text
 BrightspaceMirror/
@@ -154,17 +176,9 @@ BrightspaceMirror/
 └── _system/
 ```
 
-### Term folders
-
-Contain full per-course mirror trees.
-
-### `_school/`
-
-Contains lightweight cross-course summaries and current-term indexes.
-
-### `_system/`
-
-Contains crawler schema, state, migration, debug, and publishing metadata. `_system/` is not published to Drive by default.
+- **Term folders** contain full per-course mirror trees.
+- **`_school/`** contains lightweight cross-course summaries and current-term indexes.
+- **`_system/`** contains crawler schema, state, migration, debug, and publishing metadata. `_system/` is not published to Drive by default.
 
 ## Google Drive publishing
 
@@ -172,13 +186,7 @@ Drive publishing is optional and disabled by default in `config.example.json`.
 
 The intended model is Google Drive for desktop in streaming or mirrored mode. Brightspace Sync copies the local mirror into a mounted Drive path rather than implementing OAuth itself.
 
-The publisher is incremental:
-
-- copies new/changed files
-- leaves unchanged files alone
-- removes only files it previously published that were later removed locally
-- does not purge unrelated user files
-- verifies tracked files during Full publishing
+The publisher is incremental: it copies new or changed files, leaves unchanged files alone, removes only files it previously published that were later removed locally, does not purge unrelated user files, and verifies tracked files during Full publishing.
 
 To publish manually:
 
@@ -197,22 +205,26 @@ This works well with a single daily Windows Task Scheduler task because a missed
 
 ## Assets
 
-The crawler can download common course assets such as:
-
-- PDF
-- DOC/DOCX
-- PPT/PPTX
-- XLS/XLSX
-- text files
-- images
-- archives
-- caption files such as VTT/SRT
+The crawler can download common course assets such as PDF, DOC/DOCX, PPT/PPTX, XLS/XLSX, text files, images, archives, and caption files such as VTT/SRT.
 
 Large video/audio binaries are index-only by default. Asset behavior and size limits are configurable.
 
-## Development checks
+## Privacy and safety
 
-Run the included self-tests:
+Brightspace Sync is designed to avoid submissions, edits, and other intentional state-changing operations. Visiting Brightspace pages can still update normal platform metadata such as viewed state or "Last Visited" information.
+
+Never commit or share:
+
+- `.brightspace-profile/` — browser cookies, sessions, and potentially saved-login information
+- `BrightspaceMirror/` — private student/course content
+- `config.json` — local machine configuration
+- logs or exported data containing private academic information
+
+These paths are ignored by the included `.gitignore`. See [SECURITY.md](SECURITY.md) for the full security model.
+
+## Development
+
+Run the included checks:
 
 ```powershell
 npm run selftest
@@ -221,25 +233,17 @@ npm run lock-selftest
 npm run security-selftest
 ```
 
-The CI workflow runs supported checks on Node.js 20 and 22.
-
-## Privacy and security
-
-See [SECURITY.md](SECURITY.md).
-
-The short version:
-
-- credentials do not belong in source code or config
-- browser profile/session state stays local
-- mirrored course material stays local unless the user explicitly publishes it elsewhere
-- local private paths are gitignored
-- users should inspect `git status` before every public push
+GitHub Actions runs supported checks on Node.js 20 and 22.
 
 ## Scope and compatibility
 
 Brightspace deployments differ between institutions, and D2L can change its frontend without notice. This project is based on browser automation rather than an official D2L integration, so selectors may require maintenance over time.
 
-The crawler is intended for content visible to the signed-in user. It is not intended to bypass permissions, access restricted content, automate submissions, or evade institutional authentication controls.
+The crawler is intended only for content visible to the signed-in user. It is not intended to bypass permissions, access restricted content, automate submissions, or evade institutional authentication controls.
+
+## Release
+
+Latest stable release: **[v2.2.0](https://github.com/aryanramz/brightspace-sync/releases/tag/v2.2.0)**
 
 ## License
 
