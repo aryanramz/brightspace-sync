@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-08T20:15:42.000Z",
+  "asOf": "2026-09-08T20:15:42.000Z",
+  "activeTerms": [
+    {
+      "key": "2026-Fall",
+      "label": "Fall 2026"
+    }
+  ],
+  "count": 3,
+  "items": [
+    {
+      "id": "123456:assignment:homework-1:2026-09-14",
+      "courseId": "123456",
+      "course": "CSC 210 - Systems Programming - Fall 2026",
+      "term": {
+        "key": "2026-Fall",
+        "label": "Fall 2026"
+      },
+      "type": "assignment",
+      "title": "Homework 1: Shell Basics",
+      "dueAt": "2026-09-15T03:59:00.000Z",
+      "dueDate": "2026-09-14",
+      "dueText": "Due Sep 14, 2026 11:59 PM",
+      "allDay": false,
+      "deadlineBasis": "due",
+      "url": "https://brightspace.example.edu/assignment/1001",
+      "sourceId": "1001",
+      "source": "assignment-overview"
+    },
+    {
+      "id": "123456:assignment:homework-2:2026-09-28",
+      "courseId": "123456",
+      "course": "CSC 210 - Systems Programming - Fall 2026",
+      "term": {
+        "key": "2026-Fall",
+        "label": "Fall 2026"
+      },
+      "type": "assignment",
+      "title": "Homework 2: Processes and Pipes",
+      "dueAt": "2026-09-29T03:59:00.000Z",
+      "dueDate": "2026-09-28",
+      "dueText": "Due Sep 28, 2026 11:59 PM",
+      "allDay": false,
+      "deadlineBasis": "due",
+      "url": "https://brightspace.example.edu/assignment/1002",
+      "sourceId": "1002",
+      "source": "assignment-overview"
+    },
+    {
+      "id": "123456:assignment:lab-1:2026-10-05",
+      "courseId": "123456",
+      "course": "CSC 210 - Systems Programming - Fall 2026",
+      "term": {
+        "key": "2026-Fall",
+        "label": "Fall 2026"
+      },
+      "type": "assignment",
+      "title": "Lab 1: File Permissions",
+      "dueAt": "2026-10-06T03:59:00.000Z",
+      "dueDate": "2026-10-05",
+      "dueText": "Due Oct 5, 2026 11:59 PM",
+      "allDay": false,
+      "deadlineBasis": "due",
+      "url": "https://brightspace.example.edu/assignment/1003",
+      "sourceId": "1003",
+      "source": "assignment-overview"
+    }
+  ]
+}
