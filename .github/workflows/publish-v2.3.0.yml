@@ -1,0 +1,54 @@
+name: Publish v2.3.0
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-v2.3.0.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v2.3.0 --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "v2.3.0 already exists; nothing to do."
+            exit 0
+          fi
+
+          cat > release-notes.md <<'EOF'
+          # v2.3.0
+
+          This release improves cross-course retrieval and eliminates recurring false-positive asset-index changes during unchanged Quick Sync runs.
+
+          ## Highlights
+
+          - Added normalized cross-course upcoming-deadlines indexes in `_school/upcoming.json` and `_school/upcoming.md`.
+          - Added compact cross-course sync digests in `_school/sync-digest.json` and `_school/sync-digest.md`.
+          - Added term-scoped copies of both indexes under `_school/<term>/`.
+          - Added normalized deadline extraction for assignments, quizzes, and calendar events with duplicate suppression and chronological sorting.
+          - Separated student-facing changes from technical mirror changes in the sync digest.
+          - Fixed noisy `assets.json` rewrites caused by ordinary Brightspace navigation/UI links being treated as assets.
+          - Canonicalized and deterministically sorted asset-index entries for stable incremental comparisons.
+          - Added synthetic regression tests for school indexes and asset-index stability and wired both into CI.
+          - Expanded the synthetic sample mirror and README to document the new index outputs.
+          - Finalized runtime and launcher version labels for v2.3.0.
+
+          ## Validation
+
+          A repeated unchanged Quick Sync now reports zero Brightspace changes while preserving the normalized upcoming-deadline index. Google Drive publishing continues to run incrementally after index generation.
+
+          No migration is required for an existing local install. Existing `config.json`, `.brightspace-profile/`, and `BrightspaceMirror/` remain local and are not replaced by the release files.
+          EOF
+
+          gh release create v2.3.0 \
+            --repo "${{ github.repository }}" \
+            --target c78c614bc8b0baf01af4c43f1954facbcd50c004 \
+            --title "Brightspace Sync v2.3.0" \
+            --notes-file release-notes.md
