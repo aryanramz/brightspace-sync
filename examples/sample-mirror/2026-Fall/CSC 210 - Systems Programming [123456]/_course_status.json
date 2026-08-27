@@ -1,0 +1,19 @@
+{
+  "courseId": "123456",
+  "course": "CSC 210 - Systems Programming - Fall 2026",
+  "termKey": "2026-Fall",
+  "lastSyncMode": "quick",
+  "lastSuccessfulSyncAt": "2026-09-08T20:15:42.000Z",
+  "lastSuccessfulFullSyncAt": "2026-09-06T20:03:18.000Z",
+  "sectionsChecked": [
+    "assignments",
+    "quizzes",
+    "grades",
+    "calendar",
+    "announcements"
+  ],
+  "changes": {
+    "added": 1,
+    "updated": 0
+  }
+}
