@@ -30,7 +30,7 @@ const patterns = [
 ];
 
 for (const [name, pattern] of patterns) {
-  const output = git(['grep', '-I', '-n', '-E', pattern, ...commits], { allowNoMatch: true });
+  const output = git(['grep', '-I', '-n', '-E', '-e', pattern, ...commits], { allowNoMatch: true });
   if (!output) continue;
 
   const suspicious = output
