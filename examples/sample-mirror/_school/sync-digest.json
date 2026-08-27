@@ -1,0 +1,74 @@
+{
+  "generatedAt": "2026-09-08T20:15:42.000Z",
+  "syncMode": "quick",
+  "activeTerms": [
+    {
+      "key": "2026-Fall",
+      "label": "Fall 2026"
+    }
+  ],
+  "summary": {
+    "total": 2,
+    "added": 1,
+    "updated": 1,
+    "studentFacing": 2,
+    "technical": 0
+  },
+  "changes": [
+    {
+      "action": "added",
+      "category": "student-facing",
+      "courseId": "123456",
+      "course": "CSC 210 - Systems Programming - Fall 2026",
+      "termKey": "2026-Fall",
+      "type": "assignments-detail",
+      "label": "Assignment",
+      "id": "assignment-1002",
+      "title": "Homework 2: Processes and Pipes",
+      "url": "https://brightspace.example.edu/assignment/1002",
+      "at": "2026-09-08T20:15:40.000Z"
+    },
+    {
+      "action": "updated",
+      "category": "student-facing",
+      "courseId": "123456",
+      "course": "CSC 210 - Systems Programming - Fall 2026",
+      "termKey": "2026-Fall",
+      "type": "announcements-detail",
+      "label": "Announcement",
+      "id": "announcement-77",
+      "title": "Lab schedule updated",
+      "url": "https://brightspace.example.edu/announcement/77",
+      "at": "2026-09-08T20:15:41.000Z"
+    }
+  ],
+  "studentFacing": [
+    {
+      "action": "added",
+      "category": "student-facing",
+      "courseId": "123456",
+      "course": "CSC 210 - Systems Programming - Fall 2026",
+      "termKey": "2026-Fall",
+      "type": "assignments-detail",
+      "label": "Assignment",
+      "id": "assignment-1002",
+      "title": "Homework 2: Processes and Pipes",
+      "url": "https://brightspace.example.edu/assignment/1002",
+      "at": "2026-09-08T20:15:40.000Z"
+    },
+    {
+      "action": "updated",
+      "category": "student-facing",
+      "courseId": "123456",
+      "course": "CSC 210 - Systems Programming - Fall 2026",
+      "termKey": "2026-Fall",
+      "type": "announcements-detail",
+      "label": "Announcement",
+      "id": "announcement-77",
+      "title": "Lab schedule updated",
+      "url": "https://brightspace.example.edu/announcement/77",
+      "at": "2026-09-08T20:15:41.000Z"
+    }
+  ],
+  "technical": []
+}
