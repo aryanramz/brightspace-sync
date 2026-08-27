@@ -1,0 +1,60 @@
+{
+  "baseUrl": "https://your-school.brightspace.com",
+  "outputDir": "./BrightspaceMirror",
+  "profileDir": "./.brightspace-profile",
+  "browserExecutablePath": "",
+  "headless": false,
+  "auth": {
+    "autoSubmitSavedBrowserCredentials": false,
+    "manualLoginTimeoutMs": 600000
+  },
+  "activeTerms": [],
+  "includeUpcomingTermDays": 21,
+  "currentTerm": null,
+  "includePastCourses": false,
+  "maxContentPagesPerCourse": 300,
+  "navigationTimeoutMs": 45000,
+  "downloadTimeoutMs": 60000,
+  "dynamicWaitMs": 2200,
+  "maxSectionDetailPagesPerCourse": 120,
+  "maxInteractiveModulesPerCourse": 80,
+  "incrementalSync": true,
+  "captureNetwork": false,
+  "writeChangeLog": true,
+  "writeUpdateDiagnostics": true,
+  "quickSections": [
+    "assignments",
+    "quizzes",
+    "grades",
+    "calendar",
+    "announcements"
+  ],
+  "quickDetailSections": [
+    "announcements"
+  ],
+  "quickAssetDownloadSections": [
+    "announcements"
+  ],
+  "quickDynamicWaitMs": 1200,
+  "assetPolicy": {
+    "downloadDocuments": true,
+    "downloadImages": true,
+    "downloadTranscripts": true,
+    "downloadArchives": true,
+    "downloadVideo": false,
+    "downloadAudio": false,
+    "maxDownloadBytes": 26214400,
+    "indexExternalAssets": true
+  },
+  "drivePublish": {
+    "enabled": false,
+    "destination": "G:\\My Drive\\Brightspace Mirror",
+    "deleteRemoved": true,
+    "verifyDestinationOnFull": true,
+    "retryAttempts": 4,
+    "retryDelayMs": 700
+  },
+  "schedule": {
+    "fullIntervalDays": 7
+  }
+}

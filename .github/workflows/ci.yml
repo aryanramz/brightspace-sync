@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Syntax check
+        shell: bash
+        run: for f in src/*.mjs; do node --check "$f"; done
+
+      - name: Mirror self-test
+        run: npm run selftest
+
+      - name: Publisher self-test
+        run: npm run publish-selftest
+
+      - name: Lock self-test
+        run: npm run lock-selftest
+
+      - name: Security self-test
+        run: npm run security-selftest

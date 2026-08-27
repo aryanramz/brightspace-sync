@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# SENSITIVE: browser profile may contain cookies, tokens, and saved-login data.
+.brightspace-profile/
+
+# SENSITIVE: private course/student mirror.
+BrightspaceMirror/
+
+# Machine-specific local configuration.
+config.json
+
+# Local auth/sync state and logs.
+*.log
+.brightspace-sync.lock
+.env
+.env.*
+
+# OS/editor noise.
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
