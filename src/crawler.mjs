@@ -1010,6 +1010,14 @@ async function downloadLink(context, href, suggestedName, targetDir, baseUrl, ti
   }
 }
 
+export function isStructuralResourceCandidate(item = {}) {
+  return Boolean(
+    item.force
+    || ['iframe', 'embed', 'object', 'source', 'track', 'img', 'video', 'audio'].includes(String(item.tag || '').toLowerCase())
+    || isLikelyDownload(item.href || '')
+  );
+}
+
 export async function syncVisibleResources(page, context, targetDir, manifestFile, baseUrl, timeoutMs, config = {}) {
   const candidates = await extractResourceCandidates(page).catch(() => []);
   const results = [];
@@ -1018,16 +1026,19 @@ export async function syncVisibleResources(page, context, targetDir, manifestFil
   const policy = assetPolicy(config);
   let existingAssets = [];
   try { existingAssets = JSON.parse((await readExistingText(manifestFile)) || '[]'); } catch {}
-  const previousByUrl = new Map((Array.isArray(existingAssets) ? existingAssets : []).filter(x => x?.url).map(x => [x.url, x]));
+  const previousByUrl = new Map((Array.isArray(existingAssets) ? existingAssets : []).filter(x => x?.url).map(x => [stableAssetUrl(x.url), x]));
 
   for (const item of candidates) {
-    const structuralResource = item.force
-      || ['iframe', 'embed', 'object', 'source', 'track', 'img', 'video', 'audio'].includes(item.tag)
-      || isLikelyDownload(item.href);
-    if (seen.has(item.href)) continue;
-    seen.add(item.href);
+    // Normal navigation anchors are semantic page links, not downloadable/media
+    // assets. Indexing them made asset manifests depend on volatile Brightspace UI
+    // chrome and created false updates on otherwise unchanged syncs.
+    if (!isStructuralResourceCandidate(item)) continue;
 
     const candidateUrl = new URL(item.href, baseUrl);
+    const stableCandidateUrl = stableAssetUrl(candidateUrl.href);
+    if (seen.has(stableCandidateUrl)) continue;
+    seen.add(stableCandidateUrl);
+
     const sameOrigin = candidateUrl.origin === new URL(baseUrl).origin;
     const preliminaryKind = assetKindFrom(item.href, '', item.tag);
     const preliminaryDownloadEligible = shouldDownloadAsset(preliminaryKind, policy)
@@ -1086,6 +1097,7 @@ export async function syncVisibleResources(page, context, targetDir, manifestFil
     });
   }
 
+  results.sort((a, b) => `${a.url}|${a.kind}|${a.element}|${a.name}`.localeCompare(`${b.url}|${b.kind}|${b.element}|${b.name}`));
   const assetAction = await writeJson(manifestFile, results);
   return { assets: results, downloads, assetAction };
 }
