@@ -1,10 +1,11 @@
 import fs from 'node:fs/promises';
-import fsSync from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { absoluteFrom, ensureDir, exists, writeJson } from './utils.mjs';
+import { findChromiumExecutable } from './browser.mjs';
+import { installWriteProtection } from './write-protection.mjs';
 import { resolveCourseDirectory } from './courseFolders.mjs';
 import { ensureMirrorLayout, MIRROR_SCHEMA_VERSION } from './migration.mjs';
 import {
@@ -26,7 +27,7 @@ import { writeSchoolIndexes } from './school-indexes.mjs';
 import { publishMirrorToDrive, resolveDrivePublishConfig } from './publish.mjs';
 import { acquireSyncLock, describeActiveLock } from './sync-lock.mjs';
 
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.4.1';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG_FILE = path.join(ROOT, 'config.json');
 const EXAMPLE_FILE = path.join(ROOT, 'config.example.json');
@@ -38,38 +39,15 @@ function requestedMode() {
   return String(value).toLowerCase();
 }
 
-function authStateFile(config) {
-  return path.join(config.profileDir, '_brightspace-auth-state.json');
-}
-
-async function restoreSavedAuthState(context, config) {
-  const file = authStateFile(config);
-  if (!(await exists(file))) return false;
+async function removeLegacyPlaintextAuthState(profileDir) {
+  const legacyFile = path.join(profileDir, '_brightspace-auth-state.json');
+  if (!(await exists(legacyFile))) return;
   try {
-    const state = JSON.parse(await fs.readFile(file, 'utf8'));
-    const now = Math.floor(Date.now() / 1000);
-    const cookies = (state.cookies || [])
-      .filter(c => !c.expires || c.expires < 0 || c.expires > now)
-      .map(c => {
-        const cookie = { ...c };
-        if (!cookie.expires || cookie.expires < 0) delete cookie.expires;
-        return cookie;
-      });
-    if (cookies.length) {
-      await context.addCookies(cookies);
-      console.log(`Restored ${cookies.length} saved session cookie(s).`);
-      return true;
-    }
+    await fs.rm(legacyFile, { force: true });
+    console.log('Removed legacy plaintext auth-state backup; the Chromium profile now owns session persistence.');
   } catch (error) {
-    console.warn(`Could not restore saved auth state: ${error.message}`);
+    console.warn(`Could not remove legacy plaintext auth-state backup: ${error.message}`);
   }
-  return false;
-}
-
-async function saveAuthState(context, config) {
-  const file = authStateFile(config);
-  try { await context.storageState({ path: file }); }
-  catch (error) { console.warn(`Could not save auth state: ${error.message}`); }
 }
 
 async function loadConfig(mode) {
@@ -117,17 +95,6 @@ async function loadConfig(mode) {
   };
 }
 
-function findBraveExecutable(configuredPath) {
-  const candidates = [
-    configuredPath,
-    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
-    process.env.PROGRAMFILES && path.join(process.env.PROGRAMFILES, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
-    process.env['PROGRAMFILES(X86)'] && path.join(process.env['PROGRAMFILES(X86)'], 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe')
-  ].filter(Boolean);
-  for (const candidate of candidates) if (fsSync.existsSync(candidate)) return candidate;
-  throw new Error('Brave Browser was not found. Install Brave, or set browserExecutablePath in config.json to the full path to brave.exe.');
-}
-
 function changeSummary(changes) {
   return {
     total: changes.length,
@@ -144,6 +111,7 @@ async function runSync(mode) {
   const config = await loadConfig(mode);
   await ensureDir(config.outputDir);
   await ensureDir(config.profileDir);
+  await removeLegacyPlaintextAuthState(config.profileDir);
 
   // v1.7 performs an in-place, idempotent migration before the browser starts.
   // Existing course trees are moved, not recopied, whenever possible.
@@ -163,8 +131,10 @@ async function runSync(mode) {
   console.log(`Schema:      v${MIRROR_SCHEMA_VERSION} term-scoped`);
   console.log(`Mode:        READ-FOCUSED ${mode} incremental crawler`);
   if (mode === 'quick') console.log(`Quick checks: ${config.quickSections.join(', ')} (details: ${config.quickDetailSections.join(', ') || 'none'})`);
-  console.log(`Media:       video/audio indexed, not downloaded by default`);
-  console.log(`Asset limit: ${(config.assetPolicy.maxDownloadBytes / 1024 / 1024).toFixed(0)} MB per downloaded file`);
+  console.log('Write guard:  post-login state-changing requests blocked');
+  console.log('Session:      persistent Chromium profile only (no standalone cookie export)');
+  console.log('Media:        video/audio indexed, not downloaded by default');
+  console.log(`Asset limit:  ${(config.assetPolicy.maxDownloadBytes / 1024 / 1024).toFixed(0)} MB per downloaded file`);
   const drivePublish = resolveDrivePublishConfig(config);
   console.log(`Drive publish: ${drivePublish.enabled ? drivePublish.destination : 'disabled'}`);
   console.log(`Network diag: ${config.captureNetwork ? 'ON' : 'off'}\n`);
@@ -174,23 +144,15 @@ async function runSync(mode) {
   config._diagnosticSequence = 0;
   config._courseTermById = {};
 
-  const braveExecutable = findBraveExecutable(config.browserExecutablePath);
-  console.log(`Browser:     ${braveExecutable}`);
+  const browser = findChromiumExecutable(config.browserExecutablePath);
+  console.log(`Browser:     ${browser.name} (${browser.path})`);
 
   const context = await chromium.launchPersistentContext(config.profileDir, {
-    executablePath: braveExecutable,
+    executablePath: browser.path,
     headless: Boolean(config.headless),
     acceptDownloads: true,
     viewport: { width: 1440, height: 1000 },
     args: ['--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble']
-  });
-
-  await restoreSavedAuthState(context, config);
-
-  await context.route('**/*', async route => {
-    const method = route.request().method().toUpperCase();
-    if (['PUT', 'PATCH', 'DELETE'].includes(method)) return route.abort();
-    return route.continue();
   });
 
   await new Promise(resolve => setTimeout(resolve, 700));
@@ -205,7 +167,11 @@ async function runSync(mode) {
     const homeNetworkDir = path.join(homeSnapshot, '_network');
     const stopHomeCapture = attachNetworkCapture(page, homeNetworkDir, config.baseUrl, config.captureNetwork !== false);
     await waitForAuthenticatedHome(page, config.baseUrl, config.navigationTimeoutMs, config.auth);
-    await saveAuthState(context, config);
+
+    // Authentication and SSO/MFA must be allowed to complete normally. Once
+    // Brightspace is authenticated, install the crawler's network write guard.
+    await installWriteProtection(context, config.baseUrl);
+
     await page.waitForTimeout(config.dynamicWaitMs || 2200);
     await savePageSnapshot(page, homeSnapshot, 'page');
 
@@ -353,7 +319,6 @@ async function runSync(mode) {
       if (publishResult.failed) console.warn('Drive publish had file errors; they will be retried on the next run.');
     }
   } finally {
-    await saveAuthState(context, config);
     await context.close();
   }
 }

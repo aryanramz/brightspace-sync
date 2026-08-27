@@ -7,7 +7,7 @@
 
 **Keep a structured, term-aware local mirror of the Brightspace content you can already access.**
 
-Brightspace Sync is a read-focused authenticated crawler and incremental course-mirroring pipeline for D2L Brightspace. It uses Playwright with a persistent Chromium/Brave profile, discovers courses dynamically, captures student-visible course data, tracks meaningful changes, and optionally publishes the mirror to a Google Drive for desktop folder for downstream search or AI workflows.
+Brightspace Sync is a read-focused authenticated crawler and incremental course-mirroring pipeline for D2L Brightspace. It uses Playwright with a dedicated persistent Chromium profile, discovers courses dynamically, captures student-visible course data, tracks meaningful changes, and optionally publishes the mirror to a Google Drive for desktop folder for downstream search or AI workflows.
 
 > This project is unofficial and is not affiliated with, endorsed by, or supported by D2L or any educational institution. Users are responsible for complying with their institution's policies, applicable terms of service, and copyright rules.
 
@@ -26,6 +26,10 @@ Typical use cases include:
 ## Highlights
 
 - Persistent browser-session reuse with normal SSO/MFA when required
+- No standalone plaintext cookie/storage-state export
+- Post-login network write guard for state-changing request methods and suspicious form/action POSTs
+- Automatic detection of Brave, Google Chrome, or Microsoft Edge on Windows
+- Locked npm dependency graph for reproducible installs
 - Dynamic course discovery
 - Quick and Full synchronization modes
 - Term-aware historical archive structure
@@ -46,7 +50,7 @@ Typical use cases include:
 flowchart LR
     A[Brightspace] --> B[Playwright + persistent Chromium profile]
     B --> C[Course discovery]
-    C --> D[Read-focused crawling]
+    C --> D[Read-focused crawling + write guard]
     D --> E[Structured term-scoped mirror]
     E --> F[Change detection + status metadata]
     F --> I[Upcoming deadlines + sync digest]
@@ -98,21 +102,25 @@ Sync complete.
 
 - Windows 10 or 11
 - Node.js 20+
-- Brave Browser or another compatible Chromium browser
+- Brave, Google Chrome, Microsoft Edge, or another compatible Chromium executable configured manually
 - Access to a Brightspace environment through a normal student account
 - Optional: Google Drive for desktop if using Drive publishing
 
+Brightspace Sync is currently packaged and tested as a **Windows desktop application**. macOS, Linux, iOS, iPadOS, and Android are not supported targets in this release.
+
 ## Quick start
 
-1. Clone the repository and install dependencies:
+1. Clone the repository and install the locked dependencies:
 
    ```powershell
    git clone https://github.com/aryanramz/brightspace-sync.git
    cd brightspace-sync
-   npm install
+   npm ci
    ```
 
-2. Copy the example configuration:
+   Or run `setup.ps1`, which installs the locked dependency graph, creates `config.json` if needed, and runs the environment doctor.
+
+2. Copy the example configuration if setup did not already create it:
 
    ```powershell
    Copy-Item config.example.json config.json
@@ -158,7 +166,9 @@ If a valid Brightspace/SSO session exists, syncs can usually continue without an
 
 If the session expires, the browser may require you to complete login and MFA manually. `SETUP_LOGIN.cmd` opens the same dedicated profile so you can establish or refresh authentication without storing credentials in project files.
 
-The project does not require username or password fields in `config.json`.
+The project does not require username or password fields in `config.json`. v2.4.1 no longer exports Playwright `storageState` to a separate plaintext JSON file; session persistence is left to the dedicated Chromium profile. If the legacy `_brightspace-auth-state.json` file from v2.4.0 exists, the crawler removes it automatically.
+
+The profile itself still contains sensitive browser/session data and should be protected like any authenticated browser profile.
 
 ## Sync modes
 
@@ -255,7 +265,9 @@ Large video/audio binaries are index-only by default. Asset behavior and size li
 
 ## Privacy and safety
 
-Brightspace Sync is designed to avoid submissions, edits, and other intentional state-changing operations. Visiting Brightspace pages can still update normal platform metadata such as viewed state or "Last Visited" information.
+Brightspace Sync is designed to avoid submissions, edits, and other intentional state-changing operations. After authentication, the request guard blocks `PUT`, `PATCH`, and `DELETE`, blocks same-origin form/document `POST` requests, and blocks POST endpoints/bodies that look state-changing. Brightspace also uses some POST-based RPC/XHR requests for read operations, so benign read-like POSTs remain allowed.
+
+That means the project is **read-focused, not mathematically read-only**. Visiting Brightspace pages can still update normal platform metadata such as viewed state or "Last Visited" information.
 
 Never commit or share:
 
@@ -264,7 +276,7 @@ Never commit or share:
 - `config.json` — local machine configuration
 - logs or exported data containing private academic information
 
-These paths are ignored by the included `.gitignore`. See [SECURITY.md](SECURITY.md) for the full security model.
+These paths are ignored by the included `.gitignore`. CI also scans the working tree and full Git history for known credential formats, institution-email/URL patterns, student-ID-like fields, and forbidden sensitive paths. See [SECURITY.md](SECURITY.md) for the full security model.
 
 ## Development
 
@@ -277,10 +289,19 @@ npm run lock-selftest
 npm run school-indexes-selftest
 npm run deadline-intelligence-selftest
 npm run asset-index-selftest
+npm run write-protection-selftest
 npm run security-selftest
+npm run history-security-selftest
 ```
 
-GitHub Actions runs supported checks on Node.js 20 and 22.
+On Windows, you can also run:
+
+```powershell
+npm run doctor
+npm run windows-browser-smoke
+```
+
+GitHub Actions runs the functional/security checks on Node.js 20 and 22, performs a full-history privacy scan, and runs a clean `windows-latest` smoke job that detects an installed Chromium browser and launches it through Playwright with a temporary persistent profile.
 
 ## Scope and compatibility
 
@@ -288,9 +309,11 @@ Brightspace deployments differ between institutions, and D2L can change its fron
 
 The crawler is intended only for content visible to the signed-in user. It is not intended to bypass permissions, access restricted content, automate submissions, or evade institutional authentication controls.
 
+A green Windows smoke test proves the packaged Node/Playwright/browser path works on a clean GitHub-hosted Windows environment; it does **not** prove every institution's Brightspace/SSO deployment will behave identically. Real Brightspace compatibility still depends on the target institution.
+
 ## Release
 
-Latest stable release: **[v2.4.0](https://github.com/aryanramz/brightspace-sync/releases/tag/v2.4.0)**
+Latest stable release: **[v2.4.1](https://github.com/aryanramz/brightspace-sync/releases/tag/v2.4.1)**
 
 ## License
 
