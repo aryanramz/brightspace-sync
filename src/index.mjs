@@ -26,7 +26,7 @@ import { writeSchoolIndexes } from './school-indexes.mjs';
 import { publishMirrorToDrive, resolveDrivePublishConfig } from './publish.mjs';
 import { acquireSyncLock, describeActiveLock } from './sync-lock.mjs';
 
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG_FILE = path.join(ROOT, 'config.json');
 const EXAMPLE_FILE = path.join(ROOT, 'config.example.json');
