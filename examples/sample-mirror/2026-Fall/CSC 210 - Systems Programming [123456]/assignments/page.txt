@@ -1,0 +1,13 @@
+Assignments
+
+Homework 1: Shell Basics
+Due Sep 14, 2026 11:59 PM
+Status: Not submitted
+
+Homework 2: Processes and Pipes
+Due Sep 28, 2026 11:59 PM
+Status: Not submitted
+
+Lab 1: File Permissions
+Due Oct 5, 2026 11:59 PM
+Status: Not submitted
