@@ -30,6 +30,8 @@ Typical use cases include:
 - Quick and Full synchronization modes
 - Term-aware historical archive structure
 - Change detection that normalizes common Brightspace UI noise
+- Cross-course upcoming-deadlines index for assignments, quizzes, and calendar events
+- Human-readable and machine-readable sync digests
 - Student-visible assignments, quizzes, grades, announcements, calendar, discussions, and course content
 - Selective asset downloading with configurable size limits
 - Incremental Google Drive for desktop publishing
@@ -47,7 +49,8 @@ flowchart LR
     C --> D[Read-focused crawling]
     D --> E[Structured term-scoped mirror]
     E --> F[Change detection + status metadata]
-    F --> G[Optional Drive publish]
+    F --> I[Upcoming deadlines + sync digest]
+    I --> G[Optional Drive publish]
     E --> H[Search / archive / AI tooling]
     G --> H
 ```
@@ -70,6 +73,11 @@ BrightspaceMirror/
 │       └── assignments/
 │           └── page.txt
 ├── _school/
+│   ├── current.json
+│   ├── upcoming.json
+│   ├── upcoming.md
+│   ├── sync-digest.json
+│   └── sync-digest.md
 └── _system/
 ```
 
@@ -80,7 +88,9 @@ Existing Brightspace session found — continuing without login.
 Sync mode: QUICK
 Courses discovered: 6
 Changes: 1 added, 0 updated
-Drive publish: 3 copied, 2284 unchanged, 0 failed
+Upcoming deadlines indexed: 12
+Sync digest entries: 1
+Drive publish: 7 copied, 2284 unchanged, 0 failed
 Sync complete.
 ```
 
@@ -180,6 +190,38 @@ BrightspaceMirror/
 - **`_school/`** contains lightweight cross-course summaries and current-term indexes.
 - **`_system/`** contains crawler schema, state, migration, debug, and publishing metadata. `_system/` is not published to Drive by default.
 
+## Cross-course indexes
+
+Every successful Quick or Full sync generates cross-course views under `_school/` before Drive publishing.
+
+### `upcoming.json` and `upcoming.md`
+
+The upcoming-deadlines index normalizes dated work across active courses into one list. It extracts upcoming assignments, quizzes, and calendar events, removes obvious duplicate calendar copies of assignment/quiz deadlines, and sorts everything chronologically.
+
+Machine-readable items include fields such as:
+
+```json
+{
+  "course": "CSC 210 - Systems Programming",
+  "type": "assignment",
+  "title": "Homework 2: Processes and Pipes",
+  "dueAt": "2026-09-29T03:59:00.000Z",
+  "dueDate": "2026-09-28",
+  "deadlineBasis": "due",
+  "url": "https://brightspace.example.edu/assignment/1002"
+}
+```
+
+The same index is also written as Markdown for fast human or LLM retrieval. Active terms receive term-scoped copies under `_school/<term>/`.
+
+### `sync-digest.json` and `sync-digest.md`
+
+The sync digest turns raw change metadata into a compact cross-course summary of what was added or updated during the latest run. Student-facing changes are grouped separately from technical mirror changes such as asset-index/file updates.
+
+This makes questions such as "what changed since the last sync?" and "what do I have due this week?" answerable from small, purpose-built files instead of scanning every course tree.
+
+`_school/current.json` points to the current upcoming-deadlines and sync-digest files.
+
 ## Google Drive publishing
 
 Drive publishing is optional and disabled by default in `config.example.json`.
@@ -230,6 +272,7 @@ Run the included checks:
 npm run selftest
 npm run publish-selftest
 npm run lock-selftest
+npm run school-indexes-selftest
 npm run security-selftest
 ```
 
