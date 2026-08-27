@@ -1,9 +1,9 @@
 {
   "name": "brightspace-sync",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "private": true,
   "type": "module",
-  "description": "Read-focused Brightspace mirror for Windows/Brave with QUICK/FULL modes, term-scoped archives, optional Drive publishing, scheduling, and overlap-safe run locking.",
+  "description": "Read-focused Brightspace mirror for Windows with QUICK/FULL modes, term-scoped archives, optional Drive publishing, scheduling, and overlap-safe run locking.",
   "scripts": {
     "sync": "node src/index.mjs --mode=full",
     "full": "node src/index.mjs --mode=full",
@@ -16,12 +16,15 @@
     "school-indexes-selftest": "node src/school-indexes-selftest.mjs",
     "deadline-intelligence-selftest": "node src/deadline-intelligence-selftest.mjs",
     "asset-index-selftest": "node src/asset-index-selftest.mjs",
+    "write-protection-selftest": "node src/write-protection-selftest.mjs",
+    "history-security-selftest": "node src/history-security-selftest.mjs",
+    "windows-browser-smoke": "node src/windows-browser-smoke.mjs",
     "scheduled": "node src/scheduled.mjs",
     "setup-login": "node src/login-setup.mjs",
     "security-selftest": "node src/security-selftest.mjs"
   },
   "dependencies": {
-    "playwright": "^1.55.0"
+    "playwright": "1.55.0"
   },
   "engines": {
     "node": ">=20"
