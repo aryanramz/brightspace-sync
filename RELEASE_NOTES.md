@@ -1,3 +1,29 @@
+# v2.4.1
+
+Security, privacy, dependency-reproducibility, and Windows portability hardening.
+
+## Highlights
+
+- Removed the standalone Playwright `storageState` cookie/session export. Session persistence now stays inside the dedicated Chromium profile.
+- Automatically removes the legacy `_brightspace-auth-state.json` plaintext session backup created by v2.4.0.
+- Added a post-authentication network write guard that blocks `PUT`, `PATCH`, `DELETE`, same-origin form/document POSTs, and POST actions that look state-changing while preserving read-like Brightspace RPC/XHR traffic.
+- Added regression tests for the write guard.
+- Replaced Brave-only browser lookup with shared Windows detection for Brave, Google Chrome, and Microsoft Edge, while preserving manual `browserExecutablePath` support.
+- Added a Windows environment doctor and a GitHub-hosted `windows-latest` browser smoke test that launches an installed Chromium browser through Playwright with a temporary persistent profile.
+- Pinned Playwright to 1.55.0 and committed `package-lock.json` for reproducible installs.
+- Switched CI/setup/first-run launcher dependency installation to `npm ci`.
+- Expanded current-tree privacy scanning to cover common secret formats, institution-email patterns, student-ID-like fields, personal Windows paths, unsafe public defaults, and accidental standalone auth-state exports.
+- Added a full-Git-history security test that verifies sensitive runtime paths were never committed and scans reachable commits for common credential/academic-PII patterns.
+- Updated README and `SECURITY.md` to state the actual support/security contract: Windows desktop only, read-focused rather than mathematically read-only, and institution-specific Brightspace/SSO compatibility still requires real-world validation.
+
+## Validation
+
+Release validation requires all Linux Node.js 20/22 functional/security jobs, the full-history security scan, and the `windows-latest` browser smoke job to pass before merge/release.
+
+No mirror migration is required. Existing `config.json`, `.brightspace-profile/`, and `BrightspaceMirror/` remain local. The only security cleanup is automatic removal of the legacy plaintext `_brightspace-auth-state.json` backup if it exists.
+
+---
+
 # v2.4.0
 
 Deadline-change intelligence for cross-course deadline tracking.
