@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-echo Brightspace Sync v2.4.0 - PUBLISH TO GOOGLE DRIVE
+echo Brightspace Sync v2.4.1 - PUBLISH TO GOOGLE DRIVE
 where node >nul 2>nul
 if errorlevel 1 (
   echo.
@@ -9,6 +9,11 @@ if errorlevel 1 (
   exit /b 1
 )
 if not exist config.json copy /Y config.example.json config.json >nul
+if not exist node_modules (
+  echo Installing locked dependencies...
+  call npm ci --no-audit --no-fund
+  if errorlevel 1 goto :error
+)
 echo.
 echo Publishing the current mirror to Google Drive for desktop...
 call npm run publish
