@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-echo Brightspace Sync v2.2.0 - ESTABLISH DEDICATED BRAVE SESSION
+echo Brightspace Sync v2.3.0 - ESTABLISH DEDICATED BRAVE SESSION
 echo.
 where node >nul 2>nul
 if errorlevel 1 (
