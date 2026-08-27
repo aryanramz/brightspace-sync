@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-echo Brightspace Sync v2.2.0-rc1 - FULL
+echo Brightspace Sync v2.2.0 - FULL
 where node >nul 2>nul
 if errorlevel 1 (
   echo.

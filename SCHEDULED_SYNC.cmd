@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-echo Brightspace Sync v2.2.0-rc1 - SCHEDULED DAILY RUN
+echo Brightspace Sync v2.2.0 - SCHEDULED DAILY RUN
 where node >nul 2>nul
 if errorlevel 1 (
   echo.
