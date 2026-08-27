@@ -218,6 +218,8 @@ The same index is also written as Markdown for fast human or LLM retrieval. Acti
 
 The sync digest turns raw change metadata into a compact cross-course summary of what was added or updated during the latest run. Student-facing changes are grouped separately from technical mirror changes such as asset-index/file updates.
 
+It also performs deadline-change intelligence by comparing the newly generated deadline set with the previous sync. The digest can identify newly dated work, due-date/time changes, and deadline removals while avoiding false "deadline removed" reports when an item itself disappears from Brightspace.
+
 This makes questions such as "what changed since the last sync?" and "what do I have due this week?" answerable from small, purpose-built files instead of scanning every course tree.
 
 `_school/current.json` points to the current upcoming-deadlines and sync-digest files.
@@ -273,6 +275,8 @@ npm run selftest
 npm run publish-selftest
 npm run lock-selftest
 npm run school-indexes-selftest
+npm run deadline-intelligence-selftest
+npm run asset-index-selftest
 npm run security-selftest
 ```
 
@@ -286,7 +290,7 @@ The crawler is intended only for content visible to the signed-in user. It is no
 
 ## Release
 
-Latest stable release: **[v2.2.0](https://github.com/aryanramz/brightspace-sync/releases/tag/v2.2.0)**
+Latest stable release: **[v2.4.0](https://github.com/aryanramz/brightspace-sync/releases/tag/v2.4.0)**
 
 ## License
 

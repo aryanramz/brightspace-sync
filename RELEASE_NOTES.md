@@ -1,3 +1,25 @@
+# v2.4.0
+
+Deadline-change intelligence for cross-course deadline tracking.
+
+## Highlights
+
+- Compares normalized deadlines against the previous sync before the upcoming index is overwritten.
+- Detects due-date and due-time changes with structured `before` and `after` values.
+- Detects newly dated assignments, quizzes, and calendar-backed work.
+- Detects deadline removal only when the item itself still exists, avoiding false positives when an item disappears entirely.
+- Adds a dedicated **Deadline changes** section to `sync-digest.md`.
+- Adds structured `deadlineChanges` entries and counts to `sync-digest.json`.
+- Applies deadline intelligence to school-wide and active-term digests.
+- Adds regression coverage for moved, added, removed, disappeared-item, and first-run baseline cases.
+- Preserves clean unchanged Quick Sync behavior with zero deadline-change false positives.
+
+## Validation
+
+The deadline-intelligence self-test passes. A live unchanged Quick Sync produced 0 added, 0 updated, 33 upcoming deadlines, 0 deadline changes, 0 digest entries, and a successful incremental Google Drive publish.
+
+No migration is required for existing installs. Existing `config.json`, `.brightspace-profile/`, and `BrightspaceMirror/` remain local and are not replaced by release files.
+
 # v2.3.0
 
 This release improves cross-course retrieval and eliminates recurring false-positive asset-index changes during unchanged Quick Sync runs.

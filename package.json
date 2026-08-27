@@ -1,6 +1,6 @@
 {
   "name": "brightspace-sync",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "private": true,
   "type": "module",
   "description": "Read-focused Brightspace mirror for Windows/Brave with QUICK/FULL modes, term-scoped archives, optional Drive publishing, scheduling, and overlap-safe run locking.",

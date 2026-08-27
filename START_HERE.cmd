@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-echo Brightspace Sync v2.3.0 - FULL (START_HERE compatibility launcher)
+echo Brightspace Sync v2.4.0 - FULL (START_HERE compatibility launcher)
 where node >nul 2>nul
 if errorlevel 1 (
   echo.
