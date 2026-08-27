@@ -41,6 +41,9 @@ jobs:
       - name: School indexes self-test
         run: npm run school-indexes-selftest
 
+      - name: Deadline intelligence self-test
+        run: npm run deadline-intelligence-selftest
+
       - name: Asset index self-test
         run: npm run asset-index-selftest
 
