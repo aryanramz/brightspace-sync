@@ -49,7 +49,7 @@ async function collectFiles(root) {
       const rel = normalizeRel(path.join(relDir, entry.name));
       const abs = path.join(root, rel);
       if (entry.isDirectory()) stack.push(rel);
-      else if (entry.isFile()) {
+      else if (entry.isFile() && !/^_sync_state\.json$/i.test(entry.name)) {
         const stat = await fs.stat(abs);
         files.push({ rel, abs, stat, fingerprint: sourceFingerprint(stat) });
       }

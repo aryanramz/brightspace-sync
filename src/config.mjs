@@ -28,11 +28,48 @@ async function copyIfMissing(source, target) {
   return true;
 }
 
-async function copyDirectoryIfMissing(source, target) {
-  if (!(await exists(source)) || await exists(target)) return false;
+export async function copyDirectoryTransactionalIfMissing(source, target, {
+  copy = (from, to) => fs.cp(from, to, { recursive: true, errorOnExist: true, force: false }),
+  replaceUnverifiedTarget = false
+} = {}) {
+  const staging = `${target}.migrating`;
+  const backup = `${target}.incomplete`;
+  const sourceExists = await exists(source);
+  if (await exists(target)) {
+    if (replaceUnverifiedTarget && sourceExists) {
+      await fs.rm(staging, { recursive: true, force: true });
+      await fs.rm(backup, { recursive: true, force: true });
+      await fs.rename(target, backup);
+    } else {
+      await fs.rm(staging, { recursive: true, force: true });
+      await fs.rm(backup, { recursive: true, force: true });
+      return false;
+    }
+  }
+  if (!sourceExists) {
+    await fs.rm(staging, { recursive: true, force: true });
+    return false;
+  }
   await ensureDir(path.dirname(target));
-  await fs.cp(source, target, { recursive: true, errorOnExist: true, force: false });
-  return true;
+  await fs.rm(staging, { recursive: true, force: true });
+
+  try {
+    await copy(source, staging);
+    await fs.rename(staging, target);
+    await fs.rm(backup, { recursive: true, force: true });
+    return true;
+  } catch (error) {
+    // A concurrent successful migration wins. The staging directory is safe to
+    // discard because transactional copies never write into the final target.
+    if (await exists(target)) {
+      await fs.rm(staging, { recursive: true, force: true });
+      await fs.rm(backup, { recursive: true, force: true });
+      return false;
+    }
+    // Keep an incomplete staging directory for diagnosis. The next attempt
+    // removes it before starting a fresh copy.
+    throw error;
+  }
 }
 
 function adaptLegacyConfig(raw, paths) {
@@ -83,7 +120,7 @@ async function prepareUserConfig(paths, actions) {
   }
 
   const example = await readConfigJson(paths.bundledConfigFile, 'bundled example configuration');
-  const initial = { ...example };
+  const initial = { ...example, baseUrl: '' };
   delete initial.profileDir;
   initial.drivePublish = {
     ...(initial.drivePublish || {}),
@@ -95,6 +132,7 @@ async function prepareUserConfig(paths, actions) {
 }
 
 async function migrateLegacyProfile(raw, paths, actions) {
+  const replaceUnverifiedTarget = Boolean(raw.profileDir);
   const configuredLegacyProfile = raw.profileDir
     ? resolveConfiguredPath(raw.profileDir, { relativeTo: paths.appRoot, fallback: path.join(paths.appRoot, '.brightspace-profile') })
     : null;
@@ -102,7 +140,7 @@ async function migrateLegacyProfile(raw, paths, actions) {
     .filter((value, index, all) => value && all.indexOf(value) === index);
 
   for (const source of candidates) {
-    if (await copyDirectoryIfMissing(source, paths.profileDir)) {
+    if (await copyDirectoryTransactionalIfMissing(source, paths.profileDir, { replaceUnverifiedTarget })) {
       actions.push({ action: 'copy-legacy-browser-profile', from: source, to: paths.profileDir });
       break;
     }
@@ -142,7 +180,7 @@ export async function loadAppConfig({ mode = 'full', runtime = {} } = {}) {
   await migrateLegacyProfile(raw, paths, actions);
   raw = await removeDeprecatedProfileSetting(raw, paths, actions);
 
-  const outputDir = resolveConfiguredPath(raw.outputDir, {
+  const outputDir = paths.mirrorDirOverride || resolveConfiguredPath(raw.outputDir, {
     relativeTo: paths.dataDir,
     fallback: paths.defaultMirrorDir
   });

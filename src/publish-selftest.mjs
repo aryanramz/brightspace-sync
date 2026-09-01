@@ -12,6 +12,7 @@ await fs.mkdir(path.join(src, '2026-Fall', 'Example Course [1]'), { recursive: t
 await fs.mkdir(path.join(src, '_school'), { recursive: true });
 await fs.mkdir(path.join(src, '_system'), { recursive: true });
 await fs.writeFile(path.join(src, '2026-Fall', 'Example Course [1]', 'page.txt'), 'hello');
+await fs.writeFile(path.join(src, '2026-Fall', 'Example Course [1]', '_sync_state.json'), '{"legacy":true}');
 await fs.writeFile(path.join(src, '_school', 'current.json'), '{"ok":true}');
 await fs.writeFile(path.join(src, '_system', 'secret.txt'), 'do not publish');
 
@@ -25,6 +26,8 @@ const config = {
 let r = await publishMirrorToDrive(config, 'quick');
 assert.equal(r.copied, 2);
 assert.equal(await fs.readFile(path.join(dst, '2026-Fall', 'Example Course [1]', 'page.txt'), 'utf8'), 'hello');
+await assert.rejects(fs.access(path.join(dst, '2026-Fall', 'Example Course [1]', '_sync_state.json')));
+assert.equal(await fs.readFile(path.join(src, '2026-Fall', 'Example Course [1]', '_sync_state.json'), 'utf8'), '{"legacy":true}');
 assert.equal(await fs.readFile(path.join(dst, '_school', 'current.json'), 'utf8'), '{"ok":true}');
 await assert.rejects(fs.access(path.join(dst, '_system', 'secret.txt')));
 await fs.access(path.join(stateDir, 'drive_publish_state.json'));

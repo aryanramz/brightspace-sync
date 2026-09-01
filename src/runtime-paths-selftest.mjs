@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { loadAppConfig } from './config.mjs';
+import { copyDirectoryTransactionalIfMissing, loadAppConfig } from './config.mjs';
 import { applicationEntry, resolveRuntimePaths } from './runtime-paths.mjs';
 
 async function listTree(root) {
@@ -70,6 +70,41 @@ try {
   const second = await loadAppConfig({ mode: 'full', runtime });
   assert.equal(second.migrations.length, 0, 'runtime migration must be idempotent');
 
+  const transactionSource = path.join(tmp, 'Transaction Source');
+  const transactionTarget = path.join(tmp, 'Transaction Data', 'BrowserProfile');
+  await fs.mkdir(path.join(transactionSource, 'Default'), { recursive: true });
+  await fs.writeFile(path.join(transactionSource, 'Default', 'Cookies'), 'complete-session');
+  await assert.rejects(copyDirectoryTransactionalIfMissing(transactionSource, transactionTarget, {
+    copy: async (_source, staging) => {
+      await fs.mkdir(staging, { recursive: true });
+      await fs.writeFile(path.join(staging, 'partial-only'), 'interrupted');
+      throw new Error('simulated interrupted profile copy');
+    }
+  }), /simulated interrupted profile copy/);
+  await assert.rejects(fs.access(transactionTarget), 'an interrupted copy must not create the final profile');
+  await fs.access(`${transactionTarget}.migrating`);
+  assert.equal(await fs.readFile(path.join(transactionSource, 'Default', 'Cookies'), 'utf8'), 'complete-session');
+
+  assert.equal(await copyDirectoryTransactionalIfMissing(transactionSource, transactionTarget), true);
+  assert.equal(await fs.readFile(path.join(transactionTarget, 'Default', 'Cookies'), 'utf8'), 'complete-session');
+  await assert.rejects(fs.access(path.join(transactionTarget, 'partial-only')), 'retry must discard partial staging data');
+  await assert.rejects(fs.access(`${transactionTarget}.migrating`), 'successful rename must consume staging');
+  await fs.mkdir(`${transactionTarget}.migrating`, { recursive: true });
+  await fs.writeFile(path.join(`${transactionTarget}.migrating`, 'stale'), 'stale');
+  assert.equal(await copyDirectoryTransactionalIfMissing(transactionSource, transactionTarget), false, 'completed migration must be idempotent');
+  await assert.rejects(fs.access(`${transactionTarget}.migrating`), 'an idempotent retry must clean stale staging');
+  assert.equal(await fs.readFile(path.join(transactionSource, 'Default', 'Cookies'), 'utf8'), 'complete-session');
+
+  const unverifiedTarget = path.join(tmp, 'Unverified Data', 'BrowserProfile');
+  await fs.mkdir(unverifiedTarget, { recursive: true });
+  await fs.writeFile(path.join(unverifiedTarget, 'partial-only'), 'pre-transactional partial copy');
+  assert.equal(await copyDirectoryTransactionalIfMissing(transactionSource, unverifiedTarget, {
+    replaceUnverifiedTarget: true
+  }), true);
+  assert.equal(await fs.readFile(path.join(unverifiedTarget, 'Default', 'Cookies'), 'utf8'), 'complete-session');
+  await assert.rejects(fs.access(path.join(unverifiedTarget, 'partial-only')), 'an unverified partial final profile must be replaced');
+  await assert.rejects(fs.access(`${unverifiedTarget}.incomplete`), 'successful repair must remove its incomplete backup');
+
   const freshAppRoot = path.join(tmp, 'Fresh App');
   const freshHome = path.join(tmp, 'Fresh User');
   const freshLocalAppData = path.join(freshHome, 'AppData', 'Local');
@@ -84,20 +119,41 @@ try {
     }
   });
   assert.equal(fresh.config.outputDir, path.join(freshHome, 'Documents', 'Brightspace Mirror'));
+  assert.equal(fresh.config.baseUrl, '', 'a generated user config must require setup of baseUrl');
   assert.equal(fresh.config.drivePublish.enabled, false, 'Drive publishing must be opt-in for a new user');
   assert.equal(fresh.config.drivePublish.destination, '');
+  const freshRaw = JSON.parse(await fs.readFile(fresh.config.configFile, 'utf8'));
+  assert.equal(freshRaw.baseUrl, '');
+  const bundledExample = JSON.parse(await fs.readFile(path.join(freshAppRoot, 'config.example.json'), 'utf8'));
+  assert.equal(bundledExample.baseUrl, 'https://your-school.brightspace.com');
+
+  const mirrorOverride = path.join(tmp, 'Managed Mirror');
+  const withMirrorOverride = await loadAppConfig({
+    runtime: {
+      ...runtime,
+      env: {
+        ...runtime.env,
+        BRIGHTSPACE_SYNC_MIRROR_DIR: mirrorOverride
+      }
+    }
+  });
+  assert.equal(withMirrorOverride.config.outputDir, mirrorOverride, 'environment mirror override must beat configured outputDir');
+  const preservedLegacyConfig = JSON.parse(await fs.readFile(withMirrorOverride.config.configFile, 'utf8'));
+  assert.equal(preservedLegacyConfig.outputDir, legacyMirror, 'an environment override must not rewrite the saved mirror choice');
 
   const overridden = resolveRuntimePaths({
     appRoot: freshAppRoot,
     env: {
       USERPROFILE: freshHome,
       LOCALAPPDATA: freshLocalAppData,
-      BRIGHTSPACE_SYNC_DATA_DIR: path.join(tmp, 'Custom Data')
+      BRIGHTSPACE_SYNC_DATA_DIR: path.join(tmp, 'Custom Data'),
+      BRIGHTSPACE_SYNC_MIRROR_DIR: mirrorOverride
     },
     platform: 'win32',
     homeDir: freshHome
   });
   assert.equal(overridden.dataDir, path.join(tmp, 'Custom Data'));
+  assert.equal(overridden.mirrorDirOverride, mirrorOverride);
 
   console.log('Runtime paths self-test: PASS');
 } finally {

@@ -28,8 +28,8 @@ export function resolveRuntimePaths({
     : (env.XDG_CONFIG_HOME || path.join(userHome, '.config'));
   const dataDir = absoluteOverride(env.BRIGHTSPACE_SYNC_DATA_DIR, userHome)
     || path.join(platformDataRoot, APP_DIRECTORY_NAME);
-  const defaultMirrorDir = absoluteOverride(env.BRIGHTSPACE_SYNC_MIRROR_DIR, userHome)
-    || path.join(userHome, 'Documents', 'Brightspace Mirror');
+  const mirrorDirOverride = absoluteOverride(env.BRIGHTSPACE_SYNC_MIRROR_DIR, userHome);
+  const defaultMirrorDir = path.join(userHome, 'Documents', 'Brightspace Mirror');
 
   return {
     appRoot: normalizedAppRoot,
@@ -42,6 +42,7 @@ export function resolveRuntimePaths({
     logsDir: path.join(dataDir, 'logs'),
     lockDir: path.join(dataDir, 'state'),
     migrationLogFile: path.join(dataDir, 'state', 'runtime-migrations.json'),
+    mirrorDirOverride,
     defaultMirrorDir
   };
 }

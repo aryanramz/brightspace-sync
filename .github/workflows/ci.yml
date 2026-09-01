@@ -114,6 +114,9 @@ jobs:
         shell: pwsh
         run: Get-ChildItem src\*.mjs | ForEach-Object { node --check $_.FullName }
 
+      - name: Runtime paths and migration self-test
+        run: npm run runtime-paths-selftest
+
       - name: Windows environment doctor
         run: npm run doctor
 

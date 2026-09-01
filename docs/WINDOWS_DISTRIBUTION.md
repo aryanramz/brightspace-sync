@@ -18,13 +18,13 @@ Per-user private runtime data uses:
 
 The mirror is separate and user-selectable through `outputDir`. A blank value resolves to the current user's `Documents\Brightspace Mirror`. Relative paths in the new per-user config resolve from `%LOCALAPPDATA%\Brightspace Sync`; absolute paths are recommended for clarity.
 
-`BRIGHTSPACE_SYNC_DATA_DIR` and `BRIGHTSPACE_SYNC_MIRROR_DIR` can override the normal roots for controlled testing or managed deployments. They are not required for a normal install.
+`BRIGHTSPACE_SYNC_DATA_DIR` can override the normal per-user data root for controlled testing or managed deployments. A non-empty `BRIGHTSPACE_SYNC_MIRROR_DIR` is authoritative for the effective mirror path: it overrides `outputDir` without rewriting the saved configuration. When it is absent, the configured `outputDir` and existing legacy path-preservation behavior apply normally. Neither environment variable is required for a normal install.
 
 ## Backward compatibility
 
 On first run, if the per-user configuration does not yet exist, the runtime looks for a legacy `config.json` beside the application. It copies that config to the new location and converts a relative `outputDir` to the equivalent absolute path.
 
-The legacy `profileDir` setting is used as a migration source and then removed from the new config. The runtime owns the current browser-profile location so application updates cannot redirect the session back into `Program Files`.
+The legacy `profileDir` setting is used as a migration source and then removed from the new config. The runtime owns the current browser-profile location so application updates cannot redirect the session back into `Program Files`. Profile migration copies into `BrowserProfile.migrating` first and atomically renames it only after the complete copy succeeds. An interrupted staging copy is discarded and recopied on retry, while the legacy source remains unchanged.
 
 When the new destinations are absent, the runtime also copies recognized legacy data:
 
@@ -34,6 +34,8 @@ When the new destinations are absent, the runtime also copies recognized legacy 
 - per-course `_sync_state.json` data into `state\courses\<course-id>.json` as each course is next synchronized
 
 Migration does not overwrite an existing destination and does not delete the legacy source. Repeated startup is idempotent. Applied actions are recorded in `state\runtime-migrations.json`.
+
+Legacy per-course `_sync_state.json` files remain in the local mirror for rollback but are excluded from Google Drive publishing.
 
 ## Launcher contract
 
