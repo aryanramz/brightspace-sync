@@ -118,21 +118,26 @@ Brightspace Sync is currently packaged and tested as a **Windows desktop applica
    npm ci
    ```
 
-   Or run `setup.ps1`, which installs the locked dependency graph, creates `config.json` if needed, and runs the environment doctor.
+   Or run `setup.ps1`, which installs the locked dependency graph, initializes the per-user configuration, and runs the environment doctor.
 
-2. Copy the example configuration if setup did not already create it:
+2. Run the doctor once to initialize and display the user configuration path:
 
    ```powershell
-   Copy-Item config.example.json config.json
+   npm run doctor
    ```
 
-3. Edit `config.json` and set at minimum:
+   The normal Windows path is `%LOCALAPPDATA%\Brightspace Sync\config.json`.
+
+3. Edit that `config.json` and set at minimum:
 
    ```json
    {
-     "baseUrl": "https://your-school.brightspace.com"
+     "baseUrl": "https://your-school.brightspace.com",
+     "outputDir": "D:\\Brightspace Mirror"
    }
    ```
+
+   `outputDir` is user-selectable. If it is blank, the default is `Documents\Brightspace Mirror` in the current Windows profile.
 
 4. Run the login setup helper:
 
@@ -159,7 +164,7 @@ Brightspace Sync is currently packaged and tested as a **Windows desktop applica
 The crawler uses a dedicated persistent Chromium profile under:
 
 ```text
-.brightspace-profile/
+%LOCALAPPDATA%\Brightspace Sync\BrowserProfile\
 ```
 
 If a valid Brightspace/SSO session exists, syncs can usually continue without another login.
@@ -169,6 +174,28 @@ If the session expires, the browser may require you to complete login and MFA ma
 The project does not require username or password fields in `config.json`. v2.4.1 no longer exports Playwright `storageState` to a separate plaintext JSON file; session persistence is left to the dedicated Chromium profile. If the legacy `_brightspace-auth-state.json` file from v2.4.0 exists, the crawler removes it automatically.
 
 The profile itself still contains sensitive browser/session data and should be protected like any authenticated browser profile.
+
+## Windows storage model
+
+Application files and user data are deliberately separated so a future installer can place the application under `Program Files` without requiring it to write there:
+
+```text
+Application directory (read-only capable)
+  src/, package.json, node_modules/, launchers
+
+%LOCALAPPDATA%\Brightspace Sync\
+  config.json
+  BrowserProfile\
+  state\
+  logs\
+
+User-selected location
+  Brightspace mirror
+```
+
+All commands resolve the application directory from the running module rather than the current terminal directory. The `.cmd`, PowerShell, npm, scheduled, login, sync, and publish entry points all use the same stable launcher and runtime path abstraction.
+
+On first use after upgrading a repo-relative installation, Brightspace Sync copies `config.json`, the dedicated browser profile, and recognized global/publish state into the per-user location when the destination does not already exist. A relative legacy mirror path is converted to an absolute path so it continues to point to the same mirror. Legacy source data is left in place for rollback; migration is idempotent and recorded only under per-user state. See [`docs/WINDOWS_DISTRIBUTION.md`](docs/WINDOWS_DISTRIBUTION.md) for the detailed contract and remaining installer work.
 
 ## Sync modes
 
@@ -238,6 +265,17 @@ This makes questions such as "what changed since the last sync?" and "what do I 
 
 Drive publishing is optional and disabled by default in `config.example.json`.
 
+Enabling it requires both an explicit `enabled: true` choice and a destination selected by the user:
+
+```json
+{
+  "drivePublish": {
+    "enabled": true,
+    "destination": "G:\\My Drive\\Brightspace Mirror"
+  }
+}
+```
+
 The intended model is Google Drive for desktop in streaming or mirrored mode. Brightspace Sync copies the local mirror into a mounted Drive path rather than implementing OAuth itself.
 
 The publisher is incremental: it copies new or changed files, leaves unchanged files alone, removes only files it previously published that were later removed locally, does not purge unrelated user files, and verifies tracked files during Full publishing.
@@ -271,9 +309,9 @@ That means the project is **read-focused, not mathematically read-only**. Visiti
 
 Never commit or share:
 
-- `.brightspace-profile/` — browser cookies, sessions, and potentially saved-login information
-- `BrightspaceMirror/` — private student/course content
-- `config.json` — local machine configuration
+- `%LOCALAPPDATA%\Brightspace Sync\BrowserProfile\` (and legacy `.brightspace-profile/`) — browser cookies, sessions, and potentially saved-login information
+- the user-selected mirror (and legacy `BrightspaceMirror/`) — private student/course content
+- `%LOCALAPPDATA%\Brightspace Sync\config.json` (and legacy repo `config.json`) — local machine configuration
 - logs or exported data containing private academic information
 
 These paths are ignored by the included `.gitignore`. CI also scans the working tree and full Git history for known credential formats, institution-email/URL patterns, student-ID-like fields, and forbidden sensitive paths. See [SECURITY.md](SECURITY.md) for the full security model.
@@ -286,6 +324,7 @@ Run the included checks:
 npm run selftest
 npm run publish-selftest
 npm run lock-selftest
+npm run runtime-paths-selftest
 npm run school-indexes-selftest
 npm run deadline-intelligence-selftest
 npm run asset-index-selftest

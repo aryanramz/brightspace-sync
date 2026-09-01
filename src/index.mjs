@@ -1,9 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { absoluteFrom, ensureDir, exists, writeJson } from './utils.mjs';
+import { ensureDir, exists, writeJson } from './utils.mjs';
+import { loadAppConfig } from './config.mjs';
+import { resolveRuntimePaths } from './runtime-paths.mjs';
 import { findChromiumExecutable } from './browser.mjs';
 import { installWriteProtection } from './write-protection.mjs';
 import { resolveCourseDirectory } from './courseFolders.mjs';
@@ -28,9 +29,6 @@ import { publishMirrorToDrive, resolveDrivePublishConfig } from './publish.mjs';
 import { acquireSyncLock, describeActiveLock } from './sync-lock.mjs';
 
 const APP_VERSION = '2.4.1';
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CONFIG_FILE = path.join(ROOT, 'config.json');
-const EXAMPLE_FILE = path.join(ROOT, 'config.example.json');
 
 function requestedMode() {
   const modeArg = process.argv.find(arg => /^--mode=/i.test(arg));
@@ -50,51 +48,6 @@ async function removeLegacyPlaintextAuthState(profileDir) {
   }
 }
 
-async function loadConfig(mode) {
-  const source = await exists(CONFIG_FILE) ? CONFIG_FILE : EXAMPLE_FILE;
-  const raw = JSON.parse(await fs.readFile(source, 'utf8'));
-  return {
-    ...raw,
-    syncMode: mode,
-    incrementalSync: raw.incrementalSync ?? true,
-    captureNetwork: raw.captureNetwork ?? false,
-    writeChangeLog: raw.writeChangeLog ?? true,
-    writeUpdateDiagnostics: raw.writeUpdateDiagnostics ?? true,
-    activeTerms: Array.isArray(raw.activeTerms) ? raw.activeTerms : [],
-    includeUpcomingTermDays: Number(raw.includeUpcomingTermDays ?? 21),
-    quickSections: Array.isArray(raw.quickSections) ? raw.quickSections : ['assignments', 'quizzes', 'grades', 'calendar', 'announcements'],
-    quickDetailSections: Array.isArray(raw.quickDetailSections) ? raw.quickDetailSections : ['announcements'],
-    quickAssetDownloadSections: Array.isArray(raw.quickAssetDownloadSections) ? raw.quickAssetDownloadSections : ['announcements'],
-    dynamicWaitMs: mode === 'quick' ? Number(raw.quickDynamicWaitMs ?? 1200) : Number(raw.dynamicWaitMs ?? 2200),
-    auth: {
-      autoSubmitSavedBrowserCredentials: raw.auth?.autoSubmitSavedBrowserCredentials ?? true,
-      manualLoginTimeoutMs: Number(raw.auth?.manualLoginTimeoutMs ?? 10 * 60 * 1000)
-    },
-    drivePublish: {
-      enabled: raw.drivePublish?.enabled ?? false,
-      destination: raw.drivePublish?.destination || 'G:\\My Drive\\Brightspace Mirror',
-      deleteRemoved: raw.drivePublish?.deleteRemoved ?? true,
-      verifyDestinationOnFull: raw.drivePublish?.verifyDestinationOnFull ?? true,
-      retryAttempts: Number(raw.drivePublish?.retryAttempts ?? 4),
-      retryDelayMs: Number(raw.drivePublish?.retryDelayMs ?? 700)
-    },
-    assetPolicy: {
-      downloadDocuments: true,
-      downloadImages: true,
-      downloadTranscripts: true,
-      downloadArchives: true,
-      downloadVideo: false,
-      downloadAudio: false,
-      maxDownloadBytes: 25 * 1024 * 1024,
-      indexExternalAssets: true,
-      ...(raw.assetPolicy || {})
-    },
-    baseUrl: raw.baseUrl.replace(/\/$/, ''),
-    outputDir: absoluteFrom(ROOT, raw.outputDir),
-    profileDir: absoluteFrom(ROOT, raw.profileDir)
-  };
-}
-
 function changeSummary(changes) {
   return {
     total: changes.length,
@@ -107,8 +60,8 @@ function termDisplay(terms) {
   return terms?.length ? terms.map(t => t.label).join(', ') : '(none)';
 }
 
-async function runSync(mode) {
-  const config = await loadConfig(mode);
+async function runSync(mode, config) {
+  if (!config.baseUrl) throw new Error(`baseUrl is missing from ${config.configFile}.`);
   await ensureDir(config.outputDir);
   await ensureDir(config.profileDir);
   await removeLegacyPlaintextAuthState(config.profileDir);
@@ -325,7 +278,9 @@ async function runSync(mode) {
 
 async function main() {
   const mode = requestedMode();
-  const lock = await acquireSyncLock(ROOT, { mode });
+  const paths = resolveRuntimePaths();
+  await ensureDir(paths.lockDir);
+  const lock = await acquireSyncLock(paths.lockDir, { mode });
   if (!lock.acquired) {
     console.log(`Brightspace Sync v${APP_VERSION} — ${mode.toUpperCase()} mode`);
     console.log(`Another Brightspace operation is already running: ${describeActiveLock(lock)}.`);
@@ -341,7 +296,9 @@ async function main() {
   process.once('SIGTERM', () => { void releaseAndExit(143); });
 
   try {
-    await runSync(mode);
+    const { config, migrations } = await loadAppConfig({ mode });
+    if (migrations.length) console.log(`Runtime data migration: ${migrations.length} action(s) applied.`);
+    await runSync(mode, config);
   } finally {
     await lock.release();
   }

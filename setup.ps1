@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
 Write-Host "Brightspace Sync setup"
+Set-Location $PSScriptRoot
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   Write-Host "Node.js 20+ is required. Install it from https://nodejs.org/ then rerun this script." -ForegroundColor Yellow
@@ -17,14 +18,10 @@ node --version
 Write-Host "Installing locked dependencies..."
 npm ci --no-audit --no-fund
 
-if (-not (Test-Path "config.json")) {
-  Copy-Item "config.example.json" "config.json"
-  Write-Host "Created config.json"
-}
-
 Write-Host ""
 Write-Host "Running environment checks..."
-npm run doctor
+node (Join-Path $PSScriptRoot "src\launcher.mjs") doctor
 
 Write-Host ""
-Write-Host "Setup complete. Edit config.json, then run SETUP_LOGIN.cmd followed by FULL_SYNC.cmd." -ForegroundColor Green
+Write-Host "Setup complete. The doctor output above shows the user configuration path." -ForegroundColor Green
+Write-Host "Edit that configuration, then run SETUP_LOGIN.cmd followed by FULL_SYNC.cmd." -ForegroundColor Green

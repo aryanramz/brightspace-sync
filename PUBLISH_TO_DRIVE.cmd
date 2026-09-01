@@ -8,15 +8,13 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-if not exist config.json copy /Y config.example.json config.json >nul
 if not exist node_modules (
-  echo Installing locked dependencies...
-  call npm ci --no-audit --no-fund
-  if errorlevel 1 goto :error
+  echo Brightspace Sync runtime dependencies are missing. Run setup.ps1 or reinstall the application.
+  goto :error
 )
 echo.
 echo Publishing the current mirror to Google Drive for desktop...
-call npm run publish
+node "%~dp0src\launcher.mjs" publish
 if errorlevel 2 goto :warning
 if errorlevel 1 goto :error
 echo.

@@ -87,6 +87,7 @@ async function migrateRootCourseFolders(outputDir, config, actions) {
 export async function ensureMirrorLayout(config, appVersion = '1.7.0') {
   const outputDir = config.outputDir;
   const systemDir = path.join(outputDir, '_system');
+  const stateDir = config.stateDir || systemDir;
   const schemaFile = path.join(systemDir, 'schema.json');
   const oldSchema = await readJson(schemaFile, null);
   const firstV2Migration = !oldSchema || Number(oldSchema.schemaVersion || 0) < MIRROR_SCHEMA_VERSION;
@@ -94,6 +95,14 @@ export async function ensureMirrorLayout(config, appVersion = '1.7.0') {
 
   await ensureDir(outputDir);
   await ensureDir(systemDir);
+  await ensureDir(stateDir);
+
+  const legacyGlobalState = path.join(systemDir, 'state.json');
+  const runtimeGlobalState = path.join(stateDir, 'state.json');
+  if (stateDir !== systemDir && await exists(legacyGlobalState) && !(await exists(runtimeGlobalState))) {
+    await fs.copyFile(legacyGlobalState, runtimeGlobalState);
+    actions.push({ action: 'copy-global-state-to-user-data' });
+  }
 
   if (firstV2Migration) {
     const legacyDir = path.join(systemDir, 'legacy-v1');
@@ -110,7 +119,7 @@ export async function ensureMirrorLayout(config, appVersion = '1.7.0') {
       if (await exists(source)) {
         if (name === '_sync_state.json') {
           const legacyState = await readJson(source, {});
-          const stateFile = path.join(systemDir, 'state.json');
+          const stateFile = path.join(stateDir, 'state.json');
           if (!(await exists(stateFile))) {
             await writeJson(stateFile, { ...legacyState, schemaVersion: MIRROR_SCHEMA_VERSION, migratedFromLegacyState: true });
           }
@@ -142,6 +151,7 @@ export async function ensureMirrorLayout(config, appVersion = '1.7.0') {
   const schemaIdentityChanged = !oldSchema
     || Number(oldSchema.schemaVersion || 0) !== MIRROR_SCHEMA_VERSION
     || oldSchema.layout !== MIRROR_LAYOUT
+    || oldSchema.paths?.runtimeState !== 'outside-mirror'
     || oldSchema.appVersion !== appVersion;
   const schema = {
     schemaVersion: MIRROR_SCHEMA_VERSION,
@@ -152,6 +162,7 @@ export async function ensureMirrorLayout(config, appVersion = '1.7.0') {
     paths: {
       system: '_system',
       changes: '_system/changes',
+      runtimeState: 'outside-mirror',
       school: '_school',
       termPattern: 'YYYY-Season',
       coursePattern: '<stable course name> [orgUnitId]'
@@ -172,6 +183,7 @@ export async function ensureMirrorLayout(config, appVersion = '1.7.0') {
     schema,
     actions,
     systemDir,
+    stateDir,
     changesDir: path.join(systemDir, 'changes'),
     homeSnapshotDir: path.join(systemDir, 'debug', 'BrightspaceHome')
   };

@@ -1,22 +1,10 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { absoluteFrom, exists } from './utils.mjs';
+import { loadAppConfig } from './config.mjs';
+import { resolveRuntimePaths } from './runtime-paths.mjs';
+import { ensureDir } from './utils.mjs';
 import { publishMirrorToDrive } from './publish.mjs';
 import { acquireSyncLock, describeActiveLock } from './sync-lock.mjs';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CONFIG_FILE = path.join(ROOT, 'config.json');
-const EXAMPLE_FILE = path.join(ROOT, 'config.example.json');
-
-async function runPublish() {
-  const source = await exists(CONFIG_FILE) ? CONFIG_FILE : EXAMPLE_FILE;
-  const raw = JSON.parse(await fs.readFile(source, 'utf8'));
-  const config = {
-    ...raw,
-    outputDir: absoluteFrom(ROOT, raw.outputDir || './BrightspaceMirror'),
-    systemDir: path.join(absoluteFrom(ROOT, raw.outputDir || './BrightspaceMirror'), '_system')
-  };
+async function runPublish(config) {
   const result = await publishMirrorToDrive(config, 'manual');
   if (result.skipped) {
     console.log(`Drive publish skipped: ${result.reason}.`);
@@ -30,14 +18,17 @@ async function runPublish() {
 }
 
 async function main() {
-  const lock = await acquireSyncLock(ROOT, { mode: 'publish' });
+  const paths = resolveRuntimePaths();
+  await ensureDir(paths.lockDir);
+  const lock = await acquireSyncLock(paths.lockDir, { mode: 'publish' });
   if (!lock.acquired) {
     console.log(`Another Brightspace operation is already running: ${describeActiveLock(lock)}.`);
     console.log('Manual Drive publish was skipped so it cannot copy a partially-updated mirror.');
     return;
   }
   try {
-    await runPublish();
+    const { config } = await loadAppConfig();
+    await runPublish(config);
   } finally {
     await lock.release();
   }

@@ -1,22 +1,12 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { absoluteFrom, ensureDir, exists } from './utils.mjs';
+import { loadAppConfig } from './config.mjs';
 import { findChromiumExecutable } from './browser.mjs';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CONFIG_FILE = path.join(ROOT, 'config.json');
-const EXAMPLE_FILE = path.join(ROOT, 'config.example.json');
+const { config } = await loadAppConfig();
+const { profileDir, baseUrl } = config;
+if (!baseUrl) throw new Error(`baseUrl is missing from ${config.configFile}.`);
 
-const source = await exists(CONFIG_FILE) ? CONFIG_FILE : EXAMPLE_FILE;
-const raw = JSON.parse(await fs.readFile(source, 'utf8'));
-const profileDir = absoluteFrom(ROOT, raw.profileDir || './.brightspace-profile');
-const baseUrl = String(raw.baseUrl || '').replace(/\/$/, '');
-if (!baseUrl) throw new Error('baseUrl is missing from config.json.');
-await ensureDir(profileDir);
-
-const browser = findChromiumExecutable(raw.browserExecutablePath);
+const browser = findChromiumExecutable(config.browserExecutablePath);
 console.log(`Opening the dedicated Brightspace Sync profile in ${browser.name}.`);
 console.log(`Browser: ${browser.path}`);
 console.log(`Profile: ${profileDir}`);

@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 
+# Legacy source-checkout runtime paths remain ignored for safe upgrades/rollback.
 # SENSITIVE: browser profile may contain cookies, tokens, and saved-login data.
 .brightspace-profile/
 

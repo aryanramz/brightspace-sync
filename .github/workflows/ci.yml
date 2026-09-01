@@ -39,6 +39,9 @@ jobs:
       - name: Lock self-test
         run: npm run lock-selftest
 
+      - name: Runtime paths and migration self-test
+        run: npm run runtime-paths-selftest
+
       - name: School indexes self-test
         run: npm run school-indexes-selftest
 

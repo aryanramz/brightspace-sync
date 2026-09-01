@@ -2,6 +2,9 @@ import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { findChromiumExecutable } from './browser.mjs';
+import { loadAppConfig } from './config.mjs';
+
+const { config, paths, migrations } = await loadAppConfig();
 
 console.log(`Node: ${process.version}`);
 console.log(`Platform: ${process.platform} ${process.arch}`);
@@ -23,24 +26,33 @@ if (process.platform !== 'win32') {
 }
 
 try {
-  const pkg = JSON.parse(await fsPromises.readFile(path.resolve('package.json'), 'utf8'));
+  const pkg = JSON.parse(await fsPromises.readFile(path.join(paths.appRoot, 'package.json'), 'utf8'));
   console.log(`Project: ${pkg.name} ${pkg.version}`);
 } catch {
-  console.error('Project check: FAIL (package.json not found from current directory)');
+  console.error(`Project check: FAIL (package.json not found under ${paths.appRoot})`);
   ok = false;
 }
 
-let configuredPath = '';
+console.log(`Application: ${paths.appRoot}`);
+console.log(`Config: ${paths.configFile}`);
+console.log(`Session: ${paths.profileDir}`);
+console.log(`State: ${paths.stateDir}`);
+console.log(`Logs: ${paths.logsDir}`);
+console.log(`Mirror: ${config.outputDir}`);
+if (migrations.length) console.log(`Migration: ${migrations.length} runtime data action(s) applied`);
+
 try {
-  const config = JSON.parse(await fsPromises.readFile(path.resolve('config.json'), 'utf8'));
-  configuredPath = config.browserExecutablePath || '';
-  console.log('Config: config.json found');
-} catch {
-  console.log('Config: config.json not present yet (setup will create it from config.example.json)');
+  const probe = path.join(paths.stateDir, `.write-test-${process.pid}`);
+  await fsPromises.writeFile(probe, 'ok', 'utf8');
+  await fsPromises.unlink(probe);
+  console.log('User data check: PASS (runtime directories are writable)');
+} catch (error) {
+  console.error(`User data check: FAIL (${error.message})`);
+  ok = false;
 }
 
 try {
-  const browser = findChromiumExecutable(configuredPath);
+  const browser = findChromiumExecutable(config.browserExecutablePath || '');
   console.log(`Browser check: PASS (${browser.name}: ${browser.path})`);
 } catch (error) {
   console.error(`Browser check: FAIL (${error.message})`);

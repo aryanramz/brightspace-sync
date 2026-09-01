@@ -1,7 +1,6 @@
 {
   "baseUrl": "https://your-school.brightspace.com",
-  "outputDir": "./BrightspaceMirror",
-  "profileDir": "./.brightspace-profile",
+  "outputDir": "",
   "browserExecutablePath": "",
   "headless": false,
   "auth": {
@@ -48,7 +47,7 @@
   },
   "drivePublish": {
     "enabled": false,
-    "destination": "G:\\My Drive\\Brightspace Mirror",
+    "destination": "",
     "deleteRemoved": true,
     "verifyDestinationOnFull": true,
     "retryAttempts": 4,

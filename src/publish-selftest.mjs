@@ -7,6 +7,7 @@ import { publishMirrorToDrive } from './publish.mjs';
 const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'bs-publish-test-'));
 const src = path.join(tmp, 'BrightspaceMirror');
 const dst = path.join(tmp, 'Drive', 'Brightspace Mirror');
+const stateDir = path.join(tmp, 'AppData', 'state');
 await fs.mkdir(path.join(src, '2026-Fall', 'Example Course [1]'), { recursive: true });
 await fs.mkdir(path.join(src, '_school'), { recursive: true });
 await fs.mkdir(path.join(src, '_system'), { recursive: true });
@@ -17,6 +18,7 @@ await fs.writeFile(path.join(src, '_system', 'secret.txt'), 'do not publish');
 const config = {
   outputDir: src,
   systemDir: path.join(src, '_system'),
+  stateDir,
   drivePublish: { enabled: true, destination: dst, deleteRemoved: true, verifyDestinationOnFull: true }
 };
 
@@ -25,6 +27,8 @@ assert.equal(r.copied, 2);
 assert.equal(await fs.readFile(path.join(dst, '2026-Fall', 'Example Course [1]', 'page.txt'), 'utf8'), 'hello');
 assert.equal(await fs.readFile(path.join(dst, '_school', 'current.json'), 'utf8'), '{"ok":true}');
 await assert.rejects(fs.access(path.join(dst, '_system', 'secret.txt')));
+await fs.access(path.join(stateDir, 'drive_publish_state.json'));
+await assert.rejects(fs.access(path.join(src, '_system', 'drive_publish_state.json')));
 
 r = await publishMirrorToDrive(config, 'quick');
 assert.equal(r.copied, 0);
@@ -39,6 +43,11 @@ await fs.unlink(path.join(src, '_school', 'current.json'));
 r = await publishMirrorToDrive(config, 'quick');
 assert.equal(r.deleted, 1);
 await assert.rejects(fs.access(path.join(dst, '_school', 'current.json')));
+
+const disabled = await publishMirrorToDrive({ outputDir: src, drivePublish: { enabled: false } }, 'manual');
+assert.equal(disabled.reason, 'disabled');
+const missingDestination = await publishMirrorToDrive({ outputDir: src, drivePublish: { enabled: true, destination: '' } }, 'manual');
+assert.equal(missingDestination.reason, 'destination-not-configured');
 
 console.log('Drive publish self-test: PASS');
 await fs.rm(tmp, { recursive: true, force: true });

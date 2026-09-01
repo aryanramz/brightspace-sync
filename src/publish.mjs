@@ -86,7 +86,7 @@ async function removeEmptyDirs(root) {
 
 export function resolveDrivePublishConfig(config) {
   const raw = config.drivePublish || {};
-  const destination = raw.destination || 'G:\\My Drive\\Brightspace Mirror';
+  const destination = raw.destination || '';
   return {
     enabled: raw.enabled ?? false,
     destination,
@@ -100,6 +100,7 @@ export function resolveDrivePublishConfig(config) {
 export async function publishMirrorToDrive(config, mode = 'manual') {
   const settings = resolveDrivePublishConfig(config);
   if (!settings.enabled) return { enabled: false, skipped: true, reason: 'disabled' };
+  if (!settings.destination) return { enabled: true, skipped: true, reason: 'destination-not-configured' };
 
   const destination = path.resolve(settings.destination);
   const driveRoot = path.parse(destination).root;
@@ -108,9 +109,9 @@ export async function publishMirrorToDrive(config, mode = 'manual') {
   }
 
   await ensureDir(destination);
-  const systemDir = config.systemDir || path.join(config.outputDir, '_system');
-  await ensureDir(systemDir);
-  const stateFile = path.join(systemDir, 'drive_publish_state.json');
+  const stateDir = config.stateDir || config.systemDir || path.join(config.outputDir, '_system');
+  await ensureDir(stateDir);
+  const stateFile = path.join(stateDir, 'drive_publish_state.json');
   const oldState = await readJson(stateFile, { schemaVersion: PUBLISH_STATE_SCHEMA, destination: null, files: {} });
   const destinationChanged = path.resolve(oldState.destination || '') !== destination;
   const oldFiles = destinationChanged ? {} : (oldState.files || {});

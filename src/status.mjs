@@ -100,9 +100,11 @@ async function contentStatus(courseDir) {
   };
 }
 
-async function updateCourseSyncState(courseDir, mode, completedAt, term) {
-  const file = path.join(courseDir, '_sync_state.json');
-  const state = await readJson(file, {});
+async function updateCourseSyncState(config, course, mode, completedAt, term) {
+  const courseStateDir = path.join(config.stateDir || config.systemDir || path.join(config.outputDir, '_system'), 'courses');
+  const file = path.join(courseStateDir, `${String(course.id).replace(/[^a-z0-9_-]/gi, '_')}.json`);
+  const legacyFile = path.join(course.courseDir, '_sync_state.json');
+  const state = await readJson(file, await readJson(legacyFile, {}));
   const next = {
     ...state,
     lastSuccessfulSync: completedAt,
@@ -209,14 +211,16 @@ async function updateCourseRegistry(config, manifest, completedAt) {
 export async function writeProjectViews(config, manifest, changes, mode, completedAt) {
   const schoolDir = path.join(config.outputDir, '_school');
   const systemDir = config.systemDir || path.join(config.outputDir, '_system');
+  const stateDir = config.stateDir || systemDir;
   await ensureDir(schoolDir);
   await ensureDir(systemDir);
+  await ensureDir(stateDir);
   const courseStatuses = [];
 
   for (const course of manifest.courses) {
     const courseDir = course.courseDir;
     const courseChanges = changes.filter(x => String(x.courseId || '') === String(course.id));
-    const syncState = await updateCourseSyncState(courseDir, mode, completedAt, course.term);
+    const syncState = await updateCourseSyncState(config, course, mode, completedAt, course.term);
 
     const latestChanges = {
       generatedAt: completedAt,
@@ -276,7 +280,7 @@ export async function writeProjectViews(config, manifest, changes, mode, complet
     });
   }
 
-  const globalStateFile = path.join(systemDir, 'state.json');
+  const globalStateFile = path.join(stateDir, 'state.json');
   const globalState = await readJson(globalStateFile, {});
   const nextGlobalState = {
     ...globalState,

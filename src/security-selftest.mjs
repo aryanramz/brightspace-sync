@@ -19,6 +19,12 @@ if (/https?:\/\/(?:mycourses\.)?[a-z0-9.-]+\.edu/i.test(String(example.baseUrl |
 if (example.captureNetwork !== false) {
   throw new Error('config.example.json must keep raw network capture disabled by default.');
 }
+if (example.drivePublish?.enabled !== false || example.drivePublish?.destination) {
+  throw new Error('config.example.json must keep Drive publishing opt-in with no assumed destination.');
+}
+if (Object.hasOwn(example, 'profileDir')) {
+  throw new Error('config.example.json must not allow the browser profile to be placed beside application files.');
+}
 
 const indexSource = await fs.readFile(path.join(ROOT, 'src', 'index.mjs'), 'utf8');
 if (/\.storageState\s*\(/.test(indexSource) || /\.addCookies\s*\(/.test(indexSource)) {
