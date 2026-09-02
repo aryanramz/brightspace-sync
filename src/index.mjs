@@ -4,7 +4,6 @@ import process from 'node:process';
 import { chromium } from 'playwright';
 import { ensureDir, exists, writeJson } from './utils.mjs';
 import { loadAppConfig } from './config.mjs';
-import { resolveRuntimePaths } from './runtime-paths.mjs';
 import { findChromiumExecutable } from './browser.mjs';
 import { installWriteProtection } from './write-protection.mjs';
 import { resolveCourseDirectory } from './courseFolders.mjs';
@@ -278,7 +277,8 @@ async function runSync(mode, config) {
 
 async function main() {
   const mode = requestedMode();
-  const paths = resolveRuntimePaths();
+  const { config, paths, migrations } = await loadAppConfig({ mode });
+  if (migrations.length) console.log(`Runtime data migration: ${migrations.length} action(s) applied.`);
   await ensureDir(paths.lockDir);
   const lock = await acquireSyncLock(paths.lockDir, { mode });
   if (!lock.acquired) {
@@ -296,8 +296,6 @@ async function main() {
   process.once('SIGTERM', () => { void releaseAndExit(143); });
 
   try {
-    const { config, migrations } = await loadAppConfig({ mode });
-    if (migrations.length) console.log(`Runtime data migration: ${migrations.length} action(s) applied.`);
     await runSync(mode, config);
   } finally {
     await lock.release();

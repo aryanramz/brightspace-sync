@@ -41,6 +41,7 @@ export function resolveRuntimePaths({
     stateDir: path.join(dataDir, 'state'),
     logsDir: path.join(dataDir, 'logs'),
     lockDir: path.join(dataDir, 'state'),
+    initializationLockFile: path.join(dataDir, 'state', '.brightspace-sync-init.lock'),
     migrationLogFile: path.join(dataDir, 'state', 'runtime-migrations.json'),
     mirrorDirOverride,
     defaultMirrorDir

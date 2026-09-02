@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ensureDir, exists, writeJson } from './utils.mjs';
+import { ensureDir, exists, writeJsonAtomic } from './utils.mjs';
 
 const TERM_DIR_RE = /^\d{4}-(?:Winter|Spring|Summer|Fall)$/i;
 const PUBLISH_STATE_SCHEMA = 1;
@@ -193,7 +193,7 @@ export async function publishMirrorToDrive(config, mode = 'manual') {
     files: nextFiles,
     errors
   };
-  await writeJson(stateFile, state);
+  await writeJsonAtomic(stateFile, state);
 
   return {
     enabled: true,

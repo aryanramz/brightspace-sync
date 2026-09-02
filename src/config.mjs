@@ -1,11 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ensureDir, exists, writeJson } from './utils.mjs';
+import { ensureDir, exists, writeJsonAtomic } from './utils.mjs';
 import { resolveConfiguredPath, resolveRuntimePaths } from './runtime-paths.mjs';
+import { acquireInitializationLock, initializationLockError } from './init-lock.mjs';
 
-async function readJson(file, fallback = null) {
-  try { return JSON.parse(await fs.readFile(file, 'utf8')); } catch { return fallback; }
-}
+export const CURRENT_CONFIG_VERSION = 1;
+
+const CONFIG_MIGRATIONS = new Map([
+  [0, raw => ({ ...raw, configVersion: 1 })]
+]);
 
 async function readConfigJson(file, label) {
   let text;
@@ -21,10 +24,10 @@ async function readConfigJson(file, label) {
   }
 }
 
-async function copyIfMissing(source, target) {
+async function copyJsonIfMissing(source, target) {
   if (!(await exists(source)) || await exists(target)) return false;
-  await ensureDir(path.dirname(target));
-  await fs.copyFile(source, target);
+  const value = await readConfigJson(source, 'legacy runtime state');
+  await writeJsonAtomic(target, value);
   return true;
 }
 
@@ -98,10 +101,42 @@ function adaptLegacyConfig(raw, paths) {
 
 async function recordRuntimeMigrations(paths, actions) {
   if (!actions.length) return;
-  const prior = await readJson(paths.migrationLogFile, { migrations: [] });
+  const prior = await exists(paths.migrationLogFile)
+    ? await readConfigJson(paths.migrationLogFile, 'runtime migration log')
+    : { migrations: [] };
   const migrations = Array.isArray(prior?.migrations) ? prior.migrations : [];
   migrations.push({ at: new Date().toISOString(), actions });
-  await writeJson(paths.migrationLogFile, { migrations: migrations.slice(-50) });
+  await writeJsonAtomic(paths.migrationLogFile, { migrations: migrations.slice(-50) });
+}
+
+function parsedConfigVersion(raw, file) {
+  if (!Object.hasOwn(raw, 'configVersion')) return 0;
+  const version = raw.configVersion;
+  if (typeof version !== 'number' || !Number.isInteger(version) || version < 0) {
+    throw new Error(`Invalid configVersion in ${file}: expected a non-negative integer, received ${JSON.stringify(raw.configVersion)}.`);
+  }
+  if (version > CURRENT_CONFIG_VERSION) {
+    throw new Error(
+      `Configuration version ${version} in ${file} is newer than this application supports (${CURRENT_CONFIG_VERSION}). Upgrade Brightspace Sync before using this configuration.`
+    );
+  }
+  return version;
+}
+
+async function migrateConfigToCurrent(raw, paths, actions) {
+  let next = raw;
+  let version = parsedConfigVersion(next, paths.configFile);
+  while (version < CURRENT_CONFIG_VERSION) {
+    const migration = CONFIG_MIGRATIONS.get(version);
+    if (!migration) throw new Error(`No configuration migration is available from version ${version}.`);
+    const fromVersion = version;
+    next = migration(next);
+    version = parsedConfigVersion(next, paths.configFile);
+    if (version <= fromVersion) throw new Error(`Configuration migration from version ${fromVersion} did not advance the schema version.`);
+    actions.push({ action: 'migrate-config-version', fromVersion, toVersion: version, file: paths.configFile });
+  }
+  if (next !== raw) await writeJsonAtomic(paths.configFile, next);
+  return next;
 }
 
 async function prepareUserConfig(paths, actions) {
@@ -113,20 +148,21 @@ async function prepareUserConfig(paths, actions) {
 
   if (await exists(paths.legacyConfigFile)) {
     const legacy = await readConfigJson(paths.legacyConfigFile, 'legacy configuration');
+    parsedConfigVersion(legacy, paths.legacyConfigFile);
     const migrated = adaptLegacyConfig(legacy, paths);
-    await writeJson(paths.configFile, migrated);
+    await writeJsonAtomic(paths.configFile, migrated);
     actions.push({ action: 'copy-legacy-config', from: paths.legacyConfigFile, to: paths.configFile });
     return migrated;
   }
 
   const example = await readConfigJson(paths.bundledConfigFile, 'bundled example configuration');
-  const initial = { ...example, baseUrl: '' };
+  const initial = { ...example, configVersion: CURRENT_CONFIG_VERSION, baseUrl: '' };
   delete initial.profileDir;
   initial.drivePublish = {
     ...(initial.drivePublish || {}),
     enabled: false
   };
-  await writeJson(paths.configFile, initial);
+  await writeJsonAtomic(paths.configFile, initial);
   actions.push({ action: 'create-user-config', from: paths.bundledConfigFile, to: paths.configFile });
   return initial;
 }
@@ -152,7 +188,7 @@ async function removeDeprecatedProfileSetting(raw, paths, actions) {
   if (!Object.hasOwn(raw, 'profileDir')) return raw;
   const next = { ...raw };
   delete next.profileDir;
-  await writeJson(paths.configFile, next);
+  await writeJsonAtomic(paths.configFile, next);
   actions.push({ action: 'remove-deprecated-profile-setting', file: paths.configFile });
   return next;
 }
@@ -164,16 +200,16 @@ async function migrateLegacyState(outputDir, paths, actions) {
     [path.join(outputDir, '_sync_state.json'), path.join(paths.stateDir, 'state.json')]
   ];
   for (const [source, target] of candidates) {
-    if (await copyIfMissing(source, target)) {
+    if (await copyJsonIfMissing(source, target)) {
       actions.push({ action: 'copy-legacy-runtime-state', from: source, to: target });
     }
   }
 }
 
-export async function loadAppConfig({ mode = 'full', runtime = {} } = {}) {
-  const paths = resolveRuntimePaths(runtime);
+async function loadAppConfigUnderLock({ mode, paths }) {
   const actions = [];
   let raw = await prepareUserConfig(paths, actions);
+  raw = await migrateConfigToCurrent(raw, paths, actions);
 
   // profileDir was part of pre-installer config. It is used only as a migration
   // source; current versions always keep the authenticated profile in user data.
@@ -238,4 +274,15 @@ export async function loadAppConfig({ mode = 'full', runtime = {} } = {}) {
   };
 
   return { config, paths, migrations: actions };
+}
+
+export async function loadAppConfig({ mode = 'full', runtime = {}, initializationLock = {} } = {}) {
+  const paths = resolveRuntimePaths(runtime);
+  const lock = await acquireInitializationLock(paths, initializationLock);
+  if (!lock.acquired) throw initializationLockError(lock);
+  try {
+    return await loadAppConfigUnderLock({ mode, paths });
+  } finally {
+    await lock.release();
+  }
 }

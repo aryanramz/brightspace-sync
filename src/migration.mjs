@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ensureDir, exists, writeJson } from './utils.mjs';
+import { ensureDir, exists, writeJson, writeJsonAtomic } from './utils.mjs';
 import { canonicalCourseMirrorDir } from './courseFolders.mjs';
 import { inferCalendarTerm, parseTerm } from './terms.mjs';
 
@@ -100,7 +100,7 @@ export async function ensureMirrorLayout(config, appVersion = '1.7.0') {
   const legacyGlobalState = path.join(systemDir, 'state.json');
   const runtimeGlobalState = path.join(stateDir, 'state.json');
   if (stateDir !== systemDir && await exists(legacyGlobalState) && !(await exists(runtimeGlobalState))) {
-    await fs.copyFile(legacyGlobalState, runtimeGlobalState);
+    await writeJsonAtomic(runtimeGlobalState, await readJson(legacyGlobalState, {}));
     actions.push({ action: 'copy-global-state-to-user-data' });
   }
 
@@ -121,7 +121,7 @@ export async function ensureMirrorLayout(config, appVersion = '1.7.0') {
           const legacyState = await readJson(source, {});
           const stateFile = path.join(stateDir, 'state.json');
           if (!(await exists(stateFile))) {
-            await writeJson(stateFile, { ...legacyState, schemaVersion: MIRROR_SCHEMA_VERSION, migratedFromLegacyState: true });
+            await writeJsonAtomic(stateFile, { ...legacyState, schemaVersion: MIRROR_SCHEMA_VERSION, migratedFromLegacyState: true });
           }
         }
         await moveOrMerge(source, path.join(legacyDir, name));

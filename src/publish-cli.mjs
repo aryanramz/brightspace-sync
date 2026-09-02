@@ -1,5 +1,4 @@
 import { loadAppConfig } from './config.mjs';
-import { resolveRuntimePaths } from './runtime-paths.mjs';
 import { ensureDir } from './utils.mjs';
 import { publishMirrorToDrive } from './publish.mjs';
 import { acquireSyncLock, describeActiveLock } from './sync-lock.mjs';
@@ -18,7 +17,7 @@ async function runPublish(config) {
 }
 
 async function main() {
-  const paths = resolveRuntimePaths();
+  const { config, paths } = await loadAppConfig();
   await ensureDir(paths.lockDir);
   const lock = await acquireSyncLock(paths.lockDir, { mode: 'publish' });
   if (!lock.acquired) {
@@ -27,7 +26,6 @@ async function main() {
     return;
   }
   try {
-    const { config } = await loadAppConfig();
     await runPublish(config);
   } finally {
     await lock.release();

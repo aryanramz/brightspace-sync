@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ensureDir, writeJson } from './utils.mjs';
+import { ensureDir, writeJson, writeJsonAtomic } from './utils.mjs';
 import { parseTermKey } from './terms.mjs';
 
 async function readJson(file, fallback = null) {
@@ -112,7 +112,7 @@ async function updateCourseSyncState(config, course, mode, completedAt, term) {
     term: term || state.term || null,
     ...(mode === 'quick' ? { lastQuickSync: completedAt } : { lastFullSync: completedAt })
   };
-  await writeJson(file, next);
+  await writeJsonAtomic(file, next);
   return next;
 }
 
@@ -293,7 +293,7 @@ export async function writeProjectViews(config, manifest, changes, mode, complet
     discoveredCourses: manifest.discoveredCourses || manifest.courses.length,
     syncedCourses: manifest.courses.length
   };
-  await writeJson(globalStateFile, nextGlobalState);
+  await writeJsonAtomic(globalStateFile, nextGlobalState);
 
   const globalLatest = {
     generatedAt: completedAt,

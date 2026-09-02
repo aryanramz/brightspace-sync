@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { copyDirectoryTransactionalIfMissing, loadAppConfig } from './config.mjs';
+import { copyDirectoryTransactionalIfMissing, CURRENT_CONFIG_VERSION, loadAppConfig } from './config.mjs';
 import { applicationEntry, resolveRuntimePaths } from './runtime-paths.mjs';
 
 async function listTree(root) {
@@ -62,6 +62,7 @@ try {
   assert.equal((await fs.readFile(path.join(first.config.stateDir, 'state.json'), 'utf8')).includes('legacy'), true);
   await fs.access(path.join(first.config.stateDir, 'drive_publish_state.json'));
   const migratedRaw = JSON.parse(await fs.readFile(first.config.configFile, 'utf8'));
+  assert.equal(migratedRaw.configVersion, CURRENT_CONFIG_VERSION);
   assert.equal(migratedRaw.outputDir, legacyMirror, 'legacy relative mirror paths must retain their meaning');
   assert.equal(Object.hasOwn(migratedRaw, 'profileDir'), false, 'profile location is now owned by the runtime');
   assert.deepEqual(await listTree(appRoot), before, 'runtime initialization must not write application files');
@@ -123,6 +124,7 @@ try {
   assert.equal(fresh.config.drivePublish.enabled, false, 'Drive publishing must be opt-in for a new user');
   assert.equal(fresh.config.drivePublish.destination, '');
   const freshRaw = JSON.parse(await fs.readFile(fresh.config.configFile, 'utf8'));
+  assert.equal(freshRaw.configVersion, CURRENT_CONFIG_VERSION);
   assert.equal(freshRaw.baseUrl, '');
   const bundledExample = JSON.parse(await fs.readFile(path.join(freshAppRoot, 'config.example.json'), 'utf8'));
   assert.equal(bundledExample.baseUrl, 'https://your-school.brightspace.com');

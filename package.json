@@ -22,6 +22,7 @@
     "scheduled": "node src/launcher.mjs scheduled",
     "setup-login": "node src/launcher.mjs setup-login",
     "runtime-paths-selftest": "node src/runtime-paths-selftest.mjs",
+    "runtime-foundation-selftest": "node src/runtime-foundation-selftest.mjs",
     "security-selftest": "node src/security-selftest.mjs"
   },
   "dependencies": {
