@@ -93,8 +93,10 @@ try {
   const userHome = path.join(temp, 'isolated-user');
   const dataDir = path.join(temp, 'isolated-runtime-data');
   const mirrorDir = path.join(temp, 'chosen-school-mirror');
+  const browserTempDir = path.join(temp, 'ephemeral-browser-temp');
   await fs.mkdir(path.dirname(portableRoot), { recursive: true });
   await fs.mkdir(unrelatedCwd, { recursive: true });
+  await fs.mkdir(browserTempDir, { recursive: true });
   await fs.cp(SOURCE_BUNDLE, portableRoot, { recursive: true });
 
   const privateNode = path.join(portableRoot, 'runtime', 'node.exe');
@@ -108,7 +110,9 @@ try {
     LOCALAPPDATA: path.join(userHome, 'AppData', 'Local'),
     BRIGHTSPACE_SYNC_DATA_DIR: dataDir,
     BRIGHTSPACE_SYNC_MIRROR_DIR: mirrorDir,
-    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1',
+    TEMP: browserTempDir,
+    TMP: browserTempDir
   };
 
   const pathNode = await run(process.env.ComSpec, ['/d', '/s', '/c', 'node --version'], {
@@ -154,6 +158,50 @@ try {
   assert.equal(doctor.stdout.includes(`Config: ${path.join(dataDir, 'config.json')}`), true);
   assert.equal(doctor.stdout.includes(`Mirror: ${mirrorDir}`), true);
   assert.deepEqual(await snapshotTree(portableRoot), before, 'packaged doctor must not modify the application bundle');
+
+  const packagedBrowserModule = path.join(appRoot, 'src', 'browser.mjs');
+  const packagedPlaywrightModule = path.join(appRoot, 'node_modules', 'playwright', 'index.mjs');
+  await requireFile(packagedBrowserModule, 'packaged browser-detection implementation');
+  await requireFile(packagedPlaywrightModule, 'packaged Playwright module');
+  const browserLaunchProbe = [
+    "import { pathToFileURL } from 'node:url';",
+    "const detector = await import(pathToFileURL(process.env.BRIGHTSPACE_SYNC_PACKAGED_BROWSER_MODULE).href);",
+    "const playwright = await import(pathToFileURL(process.env.BRIGHTSPACE_SYNC_PACKAGED_PLAYWRIGHT_MODULE).href);",
+    'const detected = detector.findChromiumExecutable();',
+    'let browser;',
+    'try {',
+    '  browser = await playwright.chromium.launch({ executablePath: detected.path, headless: true });',
+    '  const page = await browser.newPage();',
+    "  await page.goto('about:blank');",
+    "  if (page.url() !== 'about:blank') throw new Error(`Unexpected page URL: ${page.url()}`);",
+    '  console.log(JSON.stringify({',
+    '    browserName: detected.name,',
+    '    browserPath: detected.path,',
+    '    nodeExecutable: process.execPath,',
+    '    playwrightModule: process.env.BRIGHTSPACE_SYNC_PACKAGED_PLAYWRIGHT_MODULE,',
+    '    pageUrl: page.url()',
+    '  }));',
+    '} finally {',
+    '  if (browser) await browser.close();',
+    '}'
+  ].join('\n');
+  const browserLaunch = await run(privateNode, ['--input-type=module', '-e', browserLaunchProbe], {
+    cwd: unrelatedCwd,
+    env: {
+      ...isolatedEnv,
+      BRIGHTSPACE_SYNC_PACKAGED_BROWSER_MODULE: packagedBrowserModule,
+      BRIGHTSPACE_SYNC_PACKAGED_PLAYWRIGHT_MODULE: packagedPlaywrightModule
+    },
+    label: 'packaged headless browser launch'
+  });
+  assert.equal(browserLaunch.code, 0, `${browserLaunch.stdout}\n${browserLaunch.stderr}`);
+  const browserResult = JSON.parse(browserLaunch.stdout.trim().split(/\r?\n/).at(-1));
+  assert.equal(['Microsoft Edge', 'Google Chrome', 'Brave'].includes(browserResult.browserName), true, `unsupported browser detected: ${browserResult.browserName}`);
+  assert.equal(path.resolve(browserResult.nodeExecutable).toLowerCase(), path.resolve(privateNode).toLowerCase(), 'browser probe must run with packaged private Node');
+  assert.equal(path.resolve(browserResult.playwrightModule).toLowerCase(), path.resolve(packagedPlaywrightModule).toLowerCase(), 'browser probe must load packaged Playwright');
+  assert.equal(browserResult.pageUrl, 'about:blank');
+  assert.deepEqual(await snapshotTree(portableRoot), before, 'packaged browser launch must not modify the application bundle');
+  console.log(`Packaged browser launch: PASS (${browserResult.browserName}: ${browserResult.browserPath})`);
 
   await requireFile(path.join(dataDir, 'config.json'), 'external per-user config');
   const config = JSON.parse(await fs.readFile(path.join(dataDir, 'config.json'), 'utf8'));
