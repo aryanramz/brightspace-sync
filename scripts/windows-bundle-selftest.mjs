@@ -81,6 +81,12 @@ async function assertNoDeveloperPathsOrSensitiveContent(bundleRoot, files) {
 }
 
 if (process.platform !== 'win32') throw new Error('The Windows bundle self-test must run on Windows.');
+const systemRoot = process.env.SystemRoot || process.env.WINDIR;
+if (!systemRoot) throw new Error('SystemRoot is unavailable; cannot construct the isolated Windows system PATH.');
+const system32 = path.join(systemRoot, 'System32');
+const systemComSpec = path.join(system32, 'cmd.exe');
+const isolatedSystemPath = [system32, systemRoot].join(path.delimiter);
+await requireFile(systemComSpec, 'Windows command processor');
 await requireFile(path.join(SOURCE_BUNDLE, 'Brightspace Sync.cmd'), 'built launcher');
 await requireFile(path.join(SOURCE_BUNDLE, 'runtime', 'node.exe'), 'private Node.js runtime');
 await requireFile(path.join(SOURCE_BUNDLE, 'app', 'src', 'launcher.mjs'), 'packaged application launcher');
@@ -94,9 +100,11 @@ try {
   const dataDir = path.join(temp, 'isolated-runtime-data');
   const mirrorDir = path.join(temp, 'chosen-school-mirror');
   const browserTempDir = path.join(temp, 'ephemeral-browser-temp');
+  const browserProfileDir = path.join(temp, 'ephemeral-browser-profile');
   await fs.mkdir(path.dirname(portableRoot), { recursive: true });
   await fs.mkdir(unrelatedCwd, { recursive: true });
   await fs.mkdir(browserTempDir, { recursive: true });
+  await fs.mkdir(browserProfileDir, { recursive: true });
   await fs.cp(SOURCE_BUNDLE, portableRoot, { recursive: true });
 
   const privateNode = path.join(portableRoot, 'runtime', 'node.exe');
@@ -105,7 +113,7 @@ try {
   const manifest = JSON.parse(await fs.readFile(path.join(portableRoot, 'bundle-manifest.json'), 'utf8'));
   const isolatedEnv = {
     ...process.env,
-    PATH: '',
+    PATH: isolatedSystemPath,
     USERPROFILE: userHome,
     LOCALAPPDATA: path.join(userHome, 'AppData', 'Local'),
     BRIGHTSPACE_SYNC_DATA_DIR: dataDir,
@@ -115,12 +123,26 @@ try {
     TMP: browserTempDir
   };
 
-  const pathNode = await run(process.env.ComSpec, ['/d', '/s', '/c', 'node --version'], {
+  const pathNode = await run(systemComSpec, ['/d', '/s', '/c', 'node --version'], {
     cwd: unrelatedCwd,
     env: isolatedEnv,
     label: 'PATH isolation probe'
   });
   assert.notEqual(pathNode.code, 0, 'ordinary node must be unavailable through PATH during the portable test');
+  const whereNode = await run(systemComSpec, ['/d', '/s', '/c', 'where node'], {
+    cwd: unrelatedCwd,
+    env: isolatedEnv,
+    label: 'PATH Node lookup probe'
+  });
+  assert.notEqual(whereNode.code, 0, 'where node must fail under the isolated Windows system PATH');
+  const whereTaskkill = await run(systemComSpec, ['/d', '/s', '/c', 'where taskkill.exe'], {
+    cwd: unrelatedCwd,
+    env: isolatedEnv,
+    label: 'Windows taskkill lookup probe'
+  });
+  assert.equal(whereTaskkill.code, 0, `taskkill.exe must remain available under the isolated Windows system PATH: ${whereTaskkill.stderr}`);
+  assert.equal(whereTaskkill.stdout.toLowerCase().includes(path.join(system32, 'taskkill.exe').toLowerCase()), true);
+  console.log('Sanitized PATH probes: PASS (Node unavailable; taskkill.exe available)');
 
   const privateVersion = await run(privateNode, ['--version'], {
     cwd: unrelatedCwd,
@@ -147,7 +169,7 @@ try {
   const before = await snapshotTree(portableRoot);
   const doctorWrapper = path.join(unrelatedCwd, 'invoke-packaged-doctor.cmd');
   await fs.writeFile(doctorWrapper, `@echo off\r\ncall "${launcher}" doctor\r\nexit /b %ERRORLEVEL%\r\n`, 'utf8');
-  const doctor = await run(process.env.ComSpec, ['/d', '/c', doctorWrapper], {
+  const doctor = await run(systemComSpec, ['/d', '/c', doctorWrapper], {
     cwd: unrelatedCwd,
     env: isolatedEnv,
     label: 'packaged doctor launcher'
@@ -168,21 +190,29 @@ try {
     "const detector = await import(pathToFileURL(process.env.BRIGHTSPACE_SYNC_PACKAGED_BROWSER_MODULE).href);",
     "const playwright = await import(pathToFileURL(process.env.BRIGHTSPACE_SYNC_PACKAGED_PLAYWRIGHT_MODULE).href);",
     'const detected = detector.findChromiumExecutable();',
-    'let browser;',
+    'const profileDir = process.env.BRIGHTSPACE_SYNC_BROWSER_PROFILE_DIR;',
+    'let context;',
     'try {',
-    '  browser = await playwright.chromium.launch({ executablePath: detected.path, headless: true });',
-    '  const page = await browser.newPage();',
-    "  await page.goto('about:blank');",
-    "  if (page.url() !== 'about:blank') throw new Error(`Unexpected page URL: ${page.url()}`);",
+    '  context = await playwright.chromium.launchPersistentContext(profileDir, {',
+    '    executablePath: detected.path,',
+    '    headless: true,',
+    "    args: ['--no-first-run', '--no-default-browser-check']",
+    '  });',
+    '  const page = context.pages()[0] || await context.newPage();',
+    "  await page.goto('data:text/html,<title>Brightspace Sync Bundle Smoke</title><p>ok</p>');",
+    '  const pageTitle = await page.title();',
+    "  if (pageTitle !== 'Brightspace Sync Bundle Smoke') throw new Error(`Unexpected page title: ${pageTitle}`);",
     '  console.log(JSON.stringify({',
     '    browserName: detected.name,',
     '    browserPath: detected.path,',
     '    nodeExecutable: process.execPath,',
     '    playwrightModule: process.env.BRIGHTSPACE_SYNC_PACKAGED_PLAYWRIGHT_MODULE,',
+    '    profileDir,',
+    '    pageTitle,',
     '    pageUrl: page.url()',
     '  }));',
     '} finally {',
-    '  if (browser) await browser.close();',
+    '  if (context) await context.close();',
     '}'
   ].join('\n');
   const browserLaunch = await run(privateNode, ['--input-type=module', '-e', browserLaunchProbe], {
@@ -190,7 +220,8 @@ try {
     env: {
       ...isolatedEnv,
       BRIGHTSPACE_SYNC_PACKAGED_BROWSER_MODULE: packagedBrowserModule,
-      BRIGHTSPACE_SYNC_PACKAGED_PLAYWRIGHT_MODULE: packagedPlaywrightModule
+      BRIGHTSPACE_SYNC_PACKAGED_PLAYWRIGHT_MODULE: packagedPlaywrightModule,
+      BRIGHTSPACE_SYNC_BROWSER_PROFILE_DIR: browserProfileDir
     },
     label: 'packaged headless browser launch'
   });
@@ -199,8 +230,12 @@ try {
   assert.equal(['Microsoft Edge', 'Google Chrome', 'Brave'].includes(browserResult.browserName), true, `unsupported browser detected: ${browserResult.browserName}`);
   assert.equal(path.resolve(browserResult.nodeExecutable).toLowerCase(), path.resolve(privateNode).toLowerCase(), 'browser probe must run with packaged private Node');
   assert.equal(path.resolve(browserResult.playwrightModule).toLowerCase(), path.resolve(packagedPlaywrightModule).toLowerCase(), 'browser probe must load packaged Playwright');
-  assert.equal(browserResult.pageUrl, 'about:blank');
+  assert.equal(path.resolve(browserResult.profileDir).toLowerCase(), path.resolve(browserProfileDir).toLowerCase(), 'browser must use the explicit test-owned profile');
+  assert.equal(browserResult.pageTitle, 'Brightspace Sync Bundle Smoke');
+  assert.match(browserResult.pageUrl, /^data:text\/html,/);
   assert.deepEqual(await snapshotTree(portableRoot), before, 'packaged browser launch must not modify the application bundle');
+  await fs.rm(browserProfileDir, { recursive: true, force: true });
+  await assert.rejects(fs.access(browserProfileDir), 'ephemeral browser profile must be removed after the launch');
   console.log(`Packaged browser launch: PASS (${browserResult.browserName}: ${browserResult.browserPath})`);
 
   await requireFile(path.join(dataDir, 'config.json'), 'external per-user config');
