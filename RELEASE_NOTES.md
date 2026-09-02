@@ -1,3 +1,17 @@
+# Unreleased — Windows distribution foundations
+
+- Separated immutable application files from per-user configuration, browser session, operational state, locks, and log storage under `%LOCALAPPDATA%\Brightspace Sync`.
+- Kept the Brightspace mirror user-selectable, with a per-user `Documents\Brightspace Mirror` default when `outputDir` is blank.
+- Added idempotent migration for legacy repo-relative config, Chromium profile, global sync state, per-course sync state, and Drive publish state while retaining legacy copies for rollback.
+- Added a stable launcher/runtime path abstraction used by npm scripts, command wrappers, scheduled sync, login setup, sync, publish, and the environment doctor.
+- Removed first-run writes and dependency installation from runtime command wrappers so they can later run from `Program Files`.
+- Kept Google Drive publishing disabled for new users and removed the assumed Drive destination; publishing now requires an explicit enable choice and destination.
+- Added cross-platform runtime path/migration tests and CI coverage.
+
+The final Windows installer is intentionally not part of this milestone. See `docs/WINDOWS_DISTRIBUTION.md` for the completed foundation and remaining packaging work.
+
+---
+
 # v2.4.1
 
 Security, privacy, dependency-reproducibility, and Windows portability hardening.

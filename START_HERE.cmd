@@ -9,15 +9,13 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-if not exist config.json copy /Y config.example.json config.json >nul
 if not exist node_modules (
-  echo Installing locked dependencies...
-  call npm ci --no-audit --no-fund
-  if errorlevel 1 goto :error
+  echo Brightspace Sync runtime dependencies are missing. Run setup.ps1 or reinstall the application.
+  goto :error
 )
 echo.
 echo Running full Brightspace mirror...
-call npm run full
+node "%~dp0src\launcher.mjs" full
 if errorlevel 1 goto :error
 echo.
 echo Full sync finished.

@@ -4,4 +4,4 @@ param(
 )
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
-npm run $Mode
+node (Join-Path $PSScriptRoot "src\launcher.mjs") $Mode

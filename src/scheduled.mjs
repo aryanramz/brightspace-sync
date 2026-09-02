@@ -2,25 +2,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { absoluteFrom, exists } from './utils.mjs';
+import { exists } from './utils.mjs';
+import { loadAppConfig } from './config.mjs';
+import { applicationEntry } from './runtime-paths.mjs';
 
-const APP_VERSION = '2.4.0';
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CONFIG_FILE = path.join(ROOT, 'config.json');
-const EXAMPLE_FILE = path.join(ROOT, 'config.example.json');
+const APP_VERSION = '2.4.1';
 
-async function loadSchedulerConfig() {
-  const source = await exists(CONFIG_FILE) ? CONFIG_FILE : EXAMPLE_FILE;
-  const raw = JSON.parse(await fs.readFile(source, 'utf8'));
-  return {
-    outputDir: absoluteFrom(ROOT, raw.outputDir || './BrightspaceMirror'),
-    fullIntervalDays: Math.max(1, Number(raw.schedule?.fullIntervalDays ?? 7))
-  };
-}
-
-async function lastFullSync(outputDir) {
+async function lastFullSync(outputDir, stateDir) {
   const files = [
+    path.join(stateDir, 'state.json'),
     path.join(outputDir, '_school', 'current.json'),
     path.join(outputDir, '_system', 'state.json')
   ];
@@ -51,18 +41,19 @@ function chooseMode(lastFull, intervalDays) {
 }
 
 async function run() {
-  const config = await loadSchedulerConfig();
-  const lastFull = await lastFullSync(config.outputDir);
-  const decision = chooseMode(lastFull, config.fullIntervalDays);
+  const { config, paths } = await loadAppConfig();
+  const fullIntervalDays = Math.max(1, Number(config.schedule?.fullIntervalDays ?? 7));
+  const lastFull = await lastFullSync(config.outputDir, config.stateDir);
+  const decision = chooseMode(lastFull, fullIntervalDays);
 
   console.log(`Brightspace Sync v${APP_VERSION} — SCHEDULED`);
-  console.log(`Weekly Full interval: ${config.fullIntervalDays} day(s)`);
+  console.log(`Weekly Full interval: ${fullIntervalDays} day(s)`);
   console.log(`Last successful Full: ${lastFull || 'none found'}`);
   console.log(`Scheduled decision: ${decision.mode.toUpperCase()} (${decision.reason})`);
   console.log('Manual QUICK_SYNC.cmd and FULL_SYNC.cmd remain unchanged.\n');
 
-  const child = spawn(process.execPath, [path.join(ROOT, 'src', 'index.mjs'), `--mode=${decision.mode}`], {
-    cwd: ROOT,
+  const child = spawn(process.execPath, [applicationEntry('src/index.mjs', paths), `--mode=${decision.mode}`], {
+    cwd: paths.appRoot,
     stdio: 'inherit',
     windowsHide: false
   });

@@ -39,6 +39,12 @@ jobs:
       - name: Lock self-test
         run: npm run lock-selftest
 
+      - name: Runtime paths and migration self-test
+        run: npm run runtime-paths-selftest
+
+      - name: Runtime schema, atomic persistence, and initialization-lock self-test
+        run: npm run runtime-foundation-selftest
+
       - name: School indexes self-test
         run: npm run school-indexes-selftest
 
@@ -110,6 +116,12 @@ jobs:
       - name: Syntax check
         shell: pwsh
         run: Get-ChildItem src\*.mjs | ForEach-Object { node --check $_.FullName }
+
+      - name: Runtime paths and migration self-test
+        run: npm run runtime-paths-selftest
+
+      - name: Runtime schema, atomic persistence, and initialization-lock self-test
+        run: npm run runtime-foundation-selftest
 
       - name: Windows environment doctor
         run: npm run doctor

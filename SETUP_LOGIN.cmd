@@ -8,8 +8,11 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-if not exist config.json copy /Y config.example.json config.json >nul
-node src\login-setup.mjs
+if not exist node_modules (
+  echo Brightspace Sync runtime dependencies are missing. Run setup.ps1 or reinstall the application.
+  goto :error
+)
+node "%~dp0src\launcher.mjs" setup-login
 if errorlevel 1 goto :error
 echo.
 echo Dedicated Chromium profile opened.

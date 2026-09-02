@@ -4,6 +4,7 @@ Brightspace Sync operates inside an authenticated student session. Treat local b
 
 ## Never commit
 
+- `%LOCALAPPDATA%\Brightspace Sync\` or copies of its contents
 - `.brightspace-profile/`
 - `BrightspaceMirror/`
 - `config.json`
@@ -17,7 +18,9 @@ The crawler reuses a dedicated persistent Chromium profile. Supported Windows au
 
 Passwords are not required in `config.json` or environment variables. Browser password-manager assistance is optional and best-effort; normal SSO/MFA remains the supported fallback.
 
-v2.4.1 does not export Playwright `storageState` to a separate plaintext JSON file. Session persistence stays inside the dedicated Chromium profile. If the legacy `_brightspace-auth-state.json` file from v2.4.0 exists, the crawler removes it automatically. The browser profile itself remains sensitive and should be protected like any authenticated browser profile.
+Brightspace Sync does not export Playwright `storageState` to a separate plaintext JSON file. Session persistence stays inside the dedicated Chromium profile at `%LOCALAPPDATA%\Brightspace Sync\BrowserProfile`. If the legacy `_brightspace-auth-state.json` file from v2.4.0 exists, the crawler removes it automatically. The browser profile itself remains sensitive and should be protected like any authenticated browser profile.
+
+Configuration, session data, runtime state, locks, and the reserved log location are outside the application directory under `%LOCALAPPDATA%\Brightspace Sync`. The mirror remains in a location selected by the user. Legacy repo-relative data is copied, not deleted, during the installer-foundation migration so an older checkout can still be used for rollback; users should remove the legacy copy manually only after they are satisfied with the migration.
 
 ## Read-focused write protection
 
@@ -49,6 +52,8 @@ GitHub Actions performs both the current-tree security check and a full-history 
 
 - Runtime dependencies are pinned and committed in `package-lock.json`.
 - CI and setup use `npm ci` for reproducible installs.
+- Runtime commands never install dependencies or create configuration beside the application files.
+- `npm run runtime-paths-selftest` verifies read-only-capable application/runtime separation, legacy migration, idempotency, and Drive opt-in defaults.
 - Linux CI runs syntax and functional/security self-tests on Node.js 20 and 22.
 - A `windows-latest` CI job runs the environment doctor and launches an installed Chromium browser through Playwright using a temporary persistent profile.
 

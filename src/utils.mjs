@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import process from 'node:process';
 
 export function safeName(value, fallback = 'untitled') {
   const cleaned = String(value ?? '')
@@ -41,6 +42,35 @@ export async function writeTextIfChanged(file, value) {
 
 export async function writeJsonIfChanged(file, value) {
   return writeTextIfChanged(file, JSON.stringify(value, null, 2));
+}
+
+export async function writeJsonAtomic(file, value, {
+  replace = (temporaryFile, destinationFile) => fs.rename(temporaryFile, destinationFile)
+} = {}) {
+  await ensureDir(path.dirname(file));
+  const next = Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  const current = await currentBuffer(file);
+  if (current && current.equals(next)) return 'unchanged';
+
+  const action = current ? 'updated' : 'added';
+  const temporaryFile = path.join(
+    path.dirname(file),
+    `.${path.basename(file)}.tmp-${process.pid}-${crypto.randomUUID()}`
+  );
+  let handle;
+  try {
+    handle = await fs.open(temporaryFile, 'wx');
+    await handle.writeFile(next);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await replace(temporaryFile, file);
+    return action;
+  } catch (error) {
+    await handle?.close().catch(() => {});
+    await fs.rm(temporaryFile, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 // Backward-compatible names. All crawler writes are now content-aware, so an

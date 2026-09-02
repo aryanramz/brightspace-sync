@@ -9,6 +9,9 @@ for (const required of ['.brightspace-profile/', 'BrightspaceMirror/', 'config.j
 }
 
 const example = JSON.parse(await fs.readFile(path.join(ROOT, 'config.example.json'), 'utf8'));
+if (example.configVersion !== 1) {
+  throw new Error('config.example.json must declare configVersion 1.');
+}
 const exampleText = JSON.stringify(example).toLowerCase();
 for (const forbidden of ['"password"', '"passwd"', '"secret"', '"username"']) {
   if (exampleText.includes(forbidden)) throw new Error(`config.example.json contains a credential-like field: ${forbidden}`);
@@ -18,6 +21,12 @@ if (/https?:\/\/(?:mycourses\.)?[a-z0-9.-]+\.edu/i.test(String(example.baseUrl |
 }
 if (example.captureNetwork !== false) {
   throw new Error('config.example.json must keep raw network capture disabled by default.');
+}
+if (example.drivePublish?.enabled !== false || example.drivePublish?.destination) {
+  throw new Error('config.example.json must keep Drive publishing opt-in with no assumed destination.');
+}
+if (Object.hasOwn(example, 'profileDir')) {
+  throw new Error('config.example.json must not allow the browser profile to be placed beside application files.');
 }
 
 const indexSource = await fs.readFile(path.join(ROOT, 'src', 'index.mjs'), 'utf8');
