@@ -134,3 +134,27 @@ jobs:
 
       - name: Security self-test
         run: npm run security-selftest
+
+  windows-bundle:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup supported Node.js build environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.20.0
+          cache: npm
+
+      - name: Install locked build dependencies without browsers
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Build portable Windows application bundle
+        run: npm run build:windows-bundle
+
+      - name: Verify private runtime and source-checkout independence
+        run: npm run windows-bundle-selftest

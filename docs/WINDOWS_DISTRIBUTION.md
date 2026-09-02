@@ -61,6 +61,33 @@ The `.cmd`, PowerShell, and npm entry points all delegate through this launcher.
 
 New configs set `drivePublish.enabled` to `false` and leave `destination` blank. Publishing runs only after the user explicitly enables it and selects a Google Drive for desktop folder. An explicit choice from a legacy config is preserved during migration.
 
+## Portable packaged-runtime contract
+
+`npm run build:windows-bundle` creates the intermediate x64 application bundle under `dist\Brightspace Sync`. It is a portable packaging proof, not the public installer or a `Setup.exe`.
+
+The bundle contains a private, checksum-verified Node.js 24.20.0 x64 runtime at `runtime\node.exe`. Node 24 is used because Node 20 reached end of life in March 2026; Node 24 remains supported LTS. The packaged `Brightspace Sync.cmd` resolves both the private runtime and `app\src\launcher.mjs` relative to its own location, so it does not use `node` from `PATH` or depend on the caller's working directory. End users do not need Node.js, npm, Git, or a source checkout, and the launcher does not require PowerShell execution-policy changes.
+
+The packaged application tree contains only runtime source, the generic example configuration, application/runtime licenses, and locked production dependencies. Playwright's JavaScript runtime is installed with lifecycle scripts and browser downloads disabled. Chromium is not bundled: the current runtime continues to use an installed Edge, Chrome, or Brave browser.
+
+The package layout is:
+
+```text
+dist\Brightspace Sync\
+  Brightspace Sync.cmd
+  bundle-manifest.json
+  runtime\
+    node.exe
+    NODE_LICENSE.txt
+  app\
+    package.json
+    config.example.json
+    LICENSE
+    src\
+    node_modules\
+```
+
+Application files remain immutable at runtime. Configuration, browser session, state, locks, and logs continue to use `%LOCALAPPDATA%\Brightspace Sync`, subject to the existing `BRIGHTSPACE_SYNC_DATA_DIR` override. The mirror remains separate and user-selectable, including through `BRIGHTSPACE_SYNC_MIRROR_DIR`.
+
 ## Deferred / Later Improvements
 
 The items below are **non-blocking**. They are not required before moving to installer and UI work, and they do not prevent the Windows distribution foundation from being considered complete.
@@ -87,7 +114,6 @@ The items below are **non-blocking**. They are not required before moving to ins
 
 The following work remains intentionally deferred to later milestones:
 
-- bundled Node runtime
 - first-run/setup UI
 - settings UI
 - Start Menu shortcuts

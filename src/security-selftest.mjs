@@ -48,7 +48,7 @@ const secretPatterns = [
 async function walk(dir) {
   const files = [];
   for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
-    if (['node_modules', '.git', '.brightspace-profile', 'BrightspaceMirror'].includes(entry.name)) continue;
+    if (['node_modules', 'dist', '.git', '.brightspace-profile', 'BrightspaceMirror'].includes(entry.name)) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) files.push(...await walk(full));
     else if (entry.isFile()) files.push(full);
