@@ -61,15 +61,45 @@ The `.cmd`, PowerShell, and npm entry points all delegate through this launcher.
 
 New configs set `drivePublish.enabled` to `false` and leave `destination` blank. Publishing runs only after the user explicitly enables it and selects a Google Drive for desktop folder. An explicit choice from a legacy config is preserved during migration.
 
-## Installer work intentionally deferred
+## Deferred / Later Improvements
 
-The foundation is ready for packaging, but the final installer still needs product choices and installer-specific verification:
+The items below are **non-blocking**. They are not required before moving to installer and UI work, and they do not prevent the Windows distribution foundation from being considered complete.
 
-- choose the installer technology and whether Node is bundled
-- install application files and dependencies under `Program Files`
-- create Start menu shortcuts and optional scheduled-task UI
-- provide configuration/mirror/Drive folder pickers
-- implement signed upgrade/uninstall behavior that preserves `%LOCALAPPDATA%` and the mirror by default
-- verify install, upgrade from a legacy checkout, repair, and uninstall in clean Windows virtual machines
+### Accepted current tradeoffs
 
-No installer artifact should be published until those flows pass end-to-end tests.
+- **Browser-profile recovery:** In the rare case where an unverified `BrowserProfile` is moved to `.incomplete`, its replacement migration fails, and the legacy source later becomes unavailable, the backup is not automatically promoted. This is acceptable because legacy data is preserved and normal retries are safe.
+- **PID reuse:** A reused PID on the same host could conservatively make an initialization or sync lock appear active until timeout. This fails safe instead of risking theft of an active lock.
+- **Foreign or malformed initialization locks:** These intentionally remain protected for the configured stale period, currently one hour, before recovery.
+- **Atomic-write directory durability:** Atomic JSON writes flush and sync the temporary file itself. Node does not provide a portable Windows mechanism for syncing the parent directory.
+- **Orphaned atomic temporary files:** A hard crash can leave uniquely named `.tmp-*` files. They neither replace nor corrupt the real destination.
+
+### Future enhancement tasks
+
+- Add more defensive browser-profile recovery that can restore or promote `.incomplete` when the replacement and subsequent legacy-source retry are unavailable.
+- Consider making the foreign or malformed initialization-lock stale period configurable, and add maintenance cleanup for stale orphan `.tmp-*` files.
+- During installer/setup UI work, resolve the actual Windows Documents known folder rather than deriving it from the user home; Documents may be redirected through OneDrive, enterprise policy, or another custom location.
+- Provide safe discovery and migration of an older source checkout during installation, including an option for the user to select the old installation when it cannot be found automatically.
+- Treat an `outputDir` change as an explicit relocation operation. Offer choices to use a new location or move the existing mirror, and preserve runtime-state and Drive-publishing behavior correctly.
+- Consider both per-user/no-admin and per-machine installation. Do not hard-code a `Program Files`-only installation unless that decision is made explicitly later.
+- Keep the mirror user-selectable and allow setup to choose a specific school-folder location instead of forcing the default Documents path. Google Drive publishing remains a separate, optional destination.
+
+### Installer and release-phase work
+
+The following work remains intentionally deferred to later milestones:
+
+- bundled Node runtime
+- first-run/setup UI
+- settings UI
+- Start Menu shortcuts
+- scheduling UI and Task Scheduler integration
+- repair behavior
+- uninstall behavior
+- choices to preserve or delete user data during uninstall
+- clean Windows VM installation testing
+- legacy upgrade testing
+- repair testing
+- uninstall testing
+- code signing
+- optional automatic updates
+
+No installer artifact should be published until the applicable install, upgrade, repair, and uninstall flows pass end-to-end testing.
