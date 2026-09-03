@@ -122,6 +122,22 @@ try {
     TEMP: browserTempDir,
     TMP: browserTempDir
   };
+  const browserEnv = {
+    ...process.env,
+    PATH: isolatedSystemPath,
+    BRIGHTSPACE_SYNC_DATA_DIR: dataDir,
+    BRIGHTSPACE_SYNC_MIRROR_DIR: mirrorDir,
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+  };
+
+  assert.equal(browserEnv.PATH, isolatedSystemPath);
+  assert.equal(browserEnv.USERPROFILE, process.env.USERPROFILE);
+  assert.equal(browserEnv.LOCALAPPDATA, process.env.LOCALAPPDATA);
+  if (process.env.TEMP !== undefined) assert.equal(browserEnv.TEMP, process.env.TEMP);
+  if (process.env.TMP !== undefined) assert.equal(browserEnv.TMP, process.env.TMP);
+  assert.equal(browserEnv.BRIGHTSPACE_SYNC_DATA_DIR, dataDir);
+  assert.equal(browserEnv.BRIGHTSPACE_SYNC_MIRROR_DIR, mirrorDir);
+  assert.equal(browserEnv.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD, '1');
 
   const pathNode = await run(systemComSpec, ['/d', '/s', '/c', 'node --version'], {
     cwd: unrelatedCwd,
@@ -218,7 +234,7 @@ try {
   const browserLaunch = await run(privateNode, ['--input-type=module', '-e', browserLaunchProbe], {
     cwd: unrelatedCwd,
     env: {
-      ...isolatedEnv,
+      ...browserEnv,
       BRIGHTSPACE_SYNC_PACKAGED_BROWSER_MODULE: packagedBrowserModule,
       BRIGHTSPACE_SYNC_PACKAGED_PLAYWRIGHT_MODULE: packagedPlaywrightModule,
       BRIGHTSPACE_SYNC_BROWSER_PROFILE_DIR: browserProfileDir
