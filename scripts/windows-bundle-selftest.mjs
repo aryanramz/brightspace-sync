@@ -16,6 +16,11 @@ async function requireFile(file, label) {
   assert.equal(stat?.isFile(), true, `${label} is missing: ${file}`);
 }
 
+async function canonicalWindowsPath(value) {
+  // Resolve filesystem aliases (including DOS 8.3 names), not just path syntax.
+  return (await fs.realpath(value)).toLowerCase();
+}
+
 async function run(command, args, { cwd, env, label }) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env, windowsHide: true });
@@ -115,6 +120,7 @@ try {
   const browserProfileDir = path.join(temp, 'ephemeral-browser-profile');
   await fs.mkdir(path.dirname(portableRoot), { recursive: true });
   await fs.mkdir(unrelatedCwd, { recursive: true });
+  await fs.mkdir(mirrorDir, { recursive: true });
   await fs.mkdir(browserTempDir, { recursive: true });
   await fs.mkdir(browserProfileDir, { recursive: true });
   await fs.cp(SOURCE_BUNDLE, portableRoot, { recursive: true });
@@ -232,24 +238,24 @@ try {
   const packagedLauncherModule = path.join(appRoot, 'src', 'launcher.mjs');
   assert.equal(controlPanelResult.schemaVersion, 1);
   assert.equal(controlPanelResult.applicationRootContainsSpaces, true, 'packaged GUI root must exercise path handling with spaces');
-  assert.equal(path.resolve(controlPanelResult.applicationRoot).toLowerCase(), path.resolve(portableRoot).toLowerCase());
-  assert.equal(path.resolve(controlPanelResult.nodeExecutable).toLowerCase(), path.resolve(privateNode).toLowerCase());
-  assert.equal(path.resolve(controlPanelResult.processFileName).toLowerCase(), path.resolve(privateNode).toLowerCase());
-  assert.equal(path.resolve(controlPanelResult.quickProcessFileName).toLowerCase(), path.resolve(privateNode).toLowerCase());
-  assert.equal(path.resolve(controlPanelResult.fullProcessFileName).toLowerCase(), path.resolve(privateNode).toLowerCase());
-  assert.equal(path.resolve(controlPanelResult.launcherScript).toLowerCase(), path.resolve(packagedLauncherModule).toLowerCase());
-  assert.equal(path.resolve(controlPanelResult.workingDirectory).toLowerCase(), path.resolve(appRoot).toLowerCase());
-  assert.equal(controlPanelResult.processArguments.includes(`"${packagedLauncherModule}" status --json`), true);
-  assert.equal(controlPanelResult.quickProcessArguments.includes(`"${packagedLauncherModule}" quick`), true);
-  assert.equal(controlPanelResult.fullProcessArguments.includes(`"${packagedLauncherModule}" full`), true);
+  assert.equal(await canonicalWindowsPath(controlPanelResult.applicationRoot), await canonicalWindowsPath(portableRoot));
+  assert.equal(await canonicalWindowsPath(controlPanelResult.nodeExecutable), await canonicalWindowsPath(privateNode));
+  assert.equal(await canonicalWindowsPath(controlPanelResult.processFileName), await canonicalWindowsPath(privateNode));
+  assert.equal(await canonicalWindowsPath(controlPanelResult.quickProcessFileName), await canonicalWindowsPath(privateNode));
+  assert.equal(await canonicalWindowsPath(controlPanelResult.fullProcessFileName), await canonicalWindowsPath(privateNode));
+  assert.equal(await canonicalWindowsPath(controlPanelResult.launcherScript), await canonicalWindowsPath(packagedLauncherModule));
+  assert.equal(await canonicalWindowsPath(controlPanelResult.workingDirectory), await canonicalWindowsPath(appRoot));
+  assert.equal(controlPanelResult.processArguments, `"${controlPanelResult.launcherScript}" status --json`);
+  assert.equal(controlPanelResult.quickProcessArguments, `"${controlPanelResult.launcherScript}" quick`);
+  assert.equal(controlPanelResult.fullProcessArguments, `"${controlPanelResult.launcherScript}" full`);
   assert.equal(controlPanelResult.useShellExecute, false);
   assert.equal(controlPanelResult.createNoWindow, true);
   assert.equal(controlPanelResult.redirectStandardOutput, true);
   assert.equal(controlPanelResult.redirectStandardError, true);
   assert.equal(controlPanelResult.statusSchemaVersion, 1);
-  assert.equal(path.resolve(controlPanelResult.statusDataDir).toLowerCase(), path.resolve(dataDir).toLowerCase());
-  assert.equal(path.resolve(controlPanelResult.statusMirrorDir).toLowerCase(), path.resolve(mirrorDir).toLowerCase());
-  assert.equal(path.resolve(controlPanelResult.statusLogsDir).toLowerCase(), path.resolve(path.join(dataDir, 'logs')).toLowerCase());
+  assert.equal(await canonicalWindowsPath(controlPanelResult.statusDataDir), await canonicalWindowsPath(dataDir));
+  assert.equal(await canonicalWindowsPath(controlPanelResult.statusMirrorDir), await canonicalWindowsPath(mirrorDir));
+  assert.equal(await canonicalWindowsPath(controlPanelResult.statusLogsDir), await canonicalWindowsPath(path.join(dataDir, 'logs')));
   assert.equal(controlPanelResult.statusRefreshIntervalMilliseconds, 5000);
   assert.equal(controlPanelResult.initialButtonsEnabled, true, 'configured control panel must initially enable sync buttons');
   assert.equal(controlPanelResult.externalLockStartedDisablesButtons, true, 'an external live lock must disable sync buttons on refresh');
@@ -319,9 +325,9 @@ try {
   assert.equal(browserLaunch.code, 0, `${browserLaunch.stdout}\n${browserLaunch.stderr}`);
   const browserResult = JSON.parse(browserLaunch.stdout.trim().split(/\r?\n/).at(-1));
   assert.equal(['Microsoft Edge', 'Google Chrome', 'Brave'].includes(browserResult.browserName), true, `unsupported browser detected: ${browserResult.browserName}`);
-  assert.equal(path.resolve(browserResult.nodeExecutable).toLowerCase(), path.resolve(privateNode).toLowerCase(), 'browser probe must run with packaged private Node');
-  assert.equal(path.resolve(browserResult.playwrightModule).toLowerCase(), path.resolve(packagedPlaywrightModule).toLowerCase(), 'browser probe must load packaged Playwright');
-  assert.equal(path.resolve(browserResult.profileDir).toLowerCase(), path.resolve(browserProfileDir).toLowerCase(), 'browser must use the explicit test-owned profile');
+  assert.equal(await canonicalWindowsPath(browserResult.nodeExecutable), await canonicalWindowsPath(privateNode), 'browser probe must run with packaged private Node');
+  assert.equal(await canonicalWindowsPath(browserResult.playwrightModule), await canonicalWindowsPath(packagedPlaywrightModule), 'browser probe must load packaged Playwright');
+  assert.equal(await canonicalWindowsPath(browserResult.profileDir), await canonicalWindowsPath(browserProfileDir), 'browser must use the explicit test-owned profile');
   assert.equal(browserResult.pageTitle, 'Brightspace Sync Bundle Smoke');
   assert.match(browserResult.pageUrl, /^data:text\/html,/);
   assert.deepEqual(await snapshotTree(portableRoot), before, 'packaged browser launch must not modify the application bundle');
