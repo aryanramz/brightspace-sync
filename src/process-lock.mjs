@@ -44,6 +44,29 @@ function isSafelyStale(snapshot, { hostname, staleAfterMs, nowMs }) {
   return snapshotAgeMs(snapshot, nowMs) > staleAfterMs;
 }
 
+export async function inspectProcessLock(root, {
+  fileName,
+  staleAfterMs = 24 * 60 * 60 * 1000,
+  nowMs = Date.now(),
+  hostname = os.hostname()
+}) {
+  if (!fileName) throw new Error('A process lock fileName is required.');
+  const lockFile = path.join(root, fileName);
+  const snapshot = await readSnapshot(lockFile);
+  if (!snapshot) {
+    return { active: false, stale: false, lockFile, existing: null, reason: 'missing' };
+  }
+
+  const stale = isSafelyStale(snapshot, { hostname, staleAfterMs, nowMs });
+  return {
+    active: !stale,
+    stale,
+    lockFile,
+    existing: snapshot.data,
+    reason: stale ? 'stale' : 'active'
+  };
+}
+
 async function removeIfUnchanged(file, snapshot) {
   if (!snapshot) return false;
   const current = await readSnapshot(file);

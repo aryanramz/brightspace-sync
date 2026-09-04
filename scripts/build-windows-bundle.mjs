@@ -21,6 +21,8 @@ const RUNTIME_SOURCE_FILES = [
   'courseFolders.mjs',
   'crawler.mjs',
   'deadline-intelligence.mjs',
+  'desktop-backend-cli.mjs',
+  'desktop-backend.mjs',
   'doctor.mjs',
   'index.mjs',
   'init-lock.mjs',
@@ -160,14 +162,21 @@ async function build() {
   const sourceConfigFile = path.join(ROOT, 'config.example.json');
   const sourceLicenseFile = path.join(ROOT, 'LICENSE');
   const launcherTemplate = path.join(ROOT, 'packaging', 'windows', 'Brightspace Sync.cmd');
+  const controlPanelBuildScript = path.join(ROOT, 'scripts', 'build-windows-control-panel.mjs');
+  const controlPanelExe = path.join(ROOT, 'desktop', 'BrightspaceSync.ControlPanel', 'bin', 'Release', 'Brightspace Sync.exe');
+  const controlPanelConfig = `${controlPanelExe}.config`;
   for (const [file, label] of [
     [sourcePackageFile, 'package.json'],
     [sourceLockFile, 'package-lock.json'],
     [sourceConfigFile, 'config.example.json'],
     [sourceLicenseFile, 'application license'],
-    [launcherTemplate, 'packaged launcher template']
+    [launcherTemplate, 'packaged launcher template'],
+    [controlPanelBuildScript, 'control-panel build script']
   ]) await requireFile(file, label);
   await validateRuntimeImportClosure();
+  await run(process.execPath, [controlPanelBuildScript], { label: 'Windows control-panel build' });
+  await requireFile(controlPanelExe, 'compiled Windows control panel');
+  await requireFile(controlPanelConfig, 'Windows control-panel runtime configuration');
 
   const sourcePackage = JSON.parse(await fs.readFile(sourcePackageFile, 'utf8'));
   const sourceLock = JSON.parse(await fs.readFile(sourceLockFile, 'utf8'));
@@ -206,6 +215,8 @@ async function build() {
     await fs.copyFile(sourceConfigFile, path.join(appDir, 'config.example.json'));
     await fs.copyFile(sourceLicenseFile, path.join(appDir, 'LICENSE'));
     await fs.copyFile(launcherTemplate, path.join(stagedBundle, 'Brightspace Sync.cmd'));
+    await fs.copyFile(controlPanelExe, path.join(stagedBundle, 'Brightspace Sync.exe'));
+    await fs.copyFile(controlPanelConfig, path.join(stagedBundle, 'Brightspace Sync.exe.config'));
 
     await installProductionDependencies(appDir, buildRoot, sourcePackage);
 
@@ -225,6 +236,12 @@ async function build() {
         archiveSha256: BUNDLED_NODE_ARCHIVE_SHA256
       },
       entrypoint: 'Brightspace Sync.cmd',
+      desktopEntrypoint: 'Brightspace Sync.exe',
+      desktop: {
+        technology: '.NET Framework 4.8 WinForms',
+        backendContract: 'status --json',
+        backendSchemaVersion: 1
+      },
       applicationRoot: 'app',
       browserStrategy: 'installed Edge, Chrome, or Brave; no bundled browser',
       productionDependencies: sourcePackage.dependencies

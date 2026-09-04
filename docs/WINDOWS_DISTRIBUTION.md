@@ -53,7 +53,7 @@ Legacy per-course `_sync_state.json` files remain in the local mirror for rollba
 
 ## Launcher contract
 
-`src/launcher.mjs` is the stable command dispatcher. It resolves entry points from its own installed application path, not the caller's working directory. Supported commands are `quick`, `full`, `publish`, `scheduled`, `setup-login`, and `doctor`.
+`src/launcher.mjs` is the stable command dispatcher. It resolves entry points from its own installed application path, not the caller's working directory. Supported commands are `quick`, `full`, `publish`, `scheduled`, `setup-login`, `doctor`, and the machine-readable `status --json` desktop contract.
 
 The `.cmd`, PowerShell, and npm entry points all delegate through this launcher. Scheduled sync resolves the child sync entry through the same application-root abstraction. Runtime wrappers fail with a reinstall/setup message if packaged dependencies are missing; they never attempt to modify the installed application tree.
 
@@ -73,6 +73,8 @@ The package layout is:
 
 ```text
 dist\Brightspace Sync\
+  Brightspace Sync.exe
+  Brightspace Sync.exe.config
   Brightspace Sync.cmd
   bundle-manifest.json
   runtime\
@@ -87,6 +89,63 @@ dist\Brightspace Sync\
 ```
 
 Application files remain immutable at runtime. Configuration, browser session, state, locks, and logs continue to use `%LOCALAPPDATA%\Brightspace Sync`, subject to the existing `BRIGHTSPACE_SYNC_DATA_DIR` override. The mirror remains separate and user-selectable, including through `BRIGHTSPACE_SYNC_MIRROR_DIR`.
+
+## Windows desktop control panel (Milestone 2B.1)
+
+The control panel targets **.NET Framework 4.8 WinForms**. Microsoft's [.NET Framework system requirements](https://learn.microsoft.com/en-us/dotnet/framework/get-started/system-requirements) list supported Windows 10 and Windows 11 releases with .NET Framework 4.8 or 4.8.1, so this produces a small native desktop executable without adding a separate modern .NET Desktop Runtime prerequisite. A modern framework-dependent WinForms build would require that separate runtime, while a modern self-contained build would materially increase the application and installer footprint; see Microsoft's [.NET deployment overview](https://learn.microsoft.com/en-us/dotnet/core/deploying/). .NET Framework WinForms also supports the Windows interoperability needed by later Credential Manager and Task Scheduler milestones.
+
+The GUI is intentionally a thin Windows shell. C# owns controls, user interaction, hidden process launching, safe bounded result display, Explorer folder opening, and a non-sensitive control-panel activity log. The existing Node application remains authoritative for configuration and migration, runtime and mirror paths, locking, status, and synchronization.
+
+The versioned status command is:
+
+```text
+runtime\node.exe app\src\launcher.mjs status --json
+```
+
+Its schema version 1 response contains only GUI-safe state:
+
+```json
+{
+  "schemaVersion": 1,
+  "appVersion": "2.4.1",
+  "status": "ready",
+  "configExists": true,
+  "configured": false,
+  "baseUrlConfigured": false,
+  "mirrorDir": "<Node-resolved path>",
+  "logsDir": "<Node-resolved path>",
+  "dataDir": "<Node-resolved path>",
+  "profileExists": true,
+  "lastSync": null,
+  "activeOperation": null
+}
+```
+
+It never returns configuration contents, URLs, cookies, credentials, tokens, or browser-session data. Calling status performs the same serialized runtime initialization as other Node commands, so the GUI does not reproduce configuration or path logic in C#.
+
+Quick Sync and Full Sync invoke `quick` and `full` through the packaged `runtime\node.exe` and `app\src\launcher.mjs`. Standard output, standard error, and the exit code are captured with no console window. The UI displays only a concise bounded outcome, disables both sync buttons while a GUI operation is active, and relies on the existing Node sync lock for cross-process protection. After a run, it refreshes the structured status to obtain the authoritative last-successful-sync timestamp.
+
+The open control panel refreshes backend status approximately every five seconds and when activated, skipping rather than overlapping an in-progress status request. Quick and Full also perform an immediate status preflight before launch. Desktop status uses the sync lock's shared read-only inspection API, so live, dead-PID, foreign, malformed, and aged locks follow the same stale classification as normal lock acquisition without status acquiring or deleting the lock.
+
+Failed GUI syncs append a bounded entry to the Node-resolved `logs\backend-failures.log`. Only the timestamp, operation, exit code, and sanitized standard-error tail are retained. URLs, credential-like fields, authorization/cookie values, and recognized key/token formats are redacted; standard output is never written to this log or shown in the main window.
+
+Open Mirror and View Logs use the paths from the status response. C# does not derive `%LOCALAPPDATA%` or the mirror location. Missing directories are reported without silently creating them. Settings and Refresh Login are explicit placeholders for later milestones.
+
+For development, build the native executable with:
+
+```powershell
+npm run build:windows-control-panel
+```
+
+The primary integration path is the portable bundle:
+
+```powershell
+npm run build:windows-bundle
+npm run windows-bundle-selftest
+& '.\dist\Brightspace Sync\Brightspace Sync.exe'
+```
+
+The standalone build output can target an already-built bundle by setting `BRIGHTSPACE_SYNC_DEV_BUNDLE_ROOT` to the absolute `dist\Brightspace Sync` directory before launching it. Normal packaged launches leave this development override unset and locate the private Node runtime relative to the GUI executable.
 
 ## Deferred / Later Improvements
 

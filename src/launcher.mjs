@@ -9,11 +9,12 @@ const COMMANDS = {
   publish: { entry: 'src/publish-cli.mjs', args: [] },
   scheduled: { entry: 'src/scheduled.mjs', args: [] },
   'setup-login': { entry: 'src/login-setup.mjs', args: [] },
-  doctor: { entry: 'src/doctor.mjs', args: [] }
+  doctor: { entry: 'src/doctor.mjs', args: [] },
+  status: { entry: 'src/desktop-backend-cli.mjs', args: ['status'] }
 };
 
 function usage() {
-  console.log('Usage: node src/launcher.mjs <quick|full|publish|scheduled|setup-login|doctor> [arguments]');
+  console.log('Usage: node src/launcher.mjs <quick|full|publish|scheduled|setup-login|doctor|status> [arguments]');
 }
 
 const [command = '', ...forwarded] = process.argv.slice(2);
@@ -30,7 +31,7 @@ if (!COMMANDS[command]) {
   ], {
     cwd: paths.appRoot,
     stdio: 'inherit',
-    windowsHide: false
+    windowsHide: true
   });
 
   child.once('error', error => {

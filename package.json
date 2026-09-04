@@ -23,6 +23,8 @@
     "setup-login": "node src/launcher.mjs setup-login",
     "runtime-paths-selftest": "node src/runtime-paths-selftest.mjs",
     "runtime-foundation-selftest": "node src/runtime-foundation-selftest.mjs",
+    "desktop-backend-selftest": "node src/desktop-backend-selftest.mjs",
+    "build:windows-control-panel": "node scripts/build-windows-control-panel.mjs",
     "build:windows-bundle": "node scripts/build-windows-bundle.mjs",
     "windows-bundle-selftest": "node scripts/windows-bundle-selftest.mjs",
     "security-selftest": "node src/security-selftest.mjs"

@@ -45,6 +45,9 @@ jobs:
       - name: Runtime schema, atomic persistence, and initialization-lock self-test
         run: npm run runtime-foundation-selftest
 
+      - name: Desktop backend contract self-test
+        run: npm run desktop-backend-selftest
+
       - name: School indexes self-test
         run: npm run school-indexes-selftest
 

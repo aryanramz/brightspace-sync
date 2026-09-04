@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE_BUNDLE = path.join(ROOT, 'dist', 'Brightspace Sync');
-const TEXT_EXTENSIONS = new Set(['.cmd', '.json', '.mjs', '.js', '.cjs', '.txt', '.md']);
+const TEXT_EXTENSIONS = new Set(['.cmd', '.config', '.json', '.mjs', '.js', '.cjs', '.txt', '.md', '.xml']);
 
 async function requireFile(file, label) {
   let stat;
@@ -80,6 +80,16 @@ async function assertNoDeveloperPathsOrSensitiveContent(bundleRoot, files) {
   }
 }
 
+async function assertBinaryOmitsPaths(file, values) {
+  const bytes = await fs.readFile(file);
+  for (const value of values.filter(Boolean)) {
+    const normalized = String(value);
+    for (const encoding of ['utf8', 'utf16le']) {
+      assert.equal(bytes.includes(Buffer.from(normalized, encoding)), false, `${path.basename(file)} contains a developer-machine path.`);
+    }
+  }
+}
+
 if (process.platform !== 'win32') throw new Error('The Windows bundle self-test must run on Windows.');
 const systemRoot = process.env.SystemRoot || process.env.WINDIR;
 if (!systemRoot) throw new Error('SystemRoot is unavailable; cannot construct the isolated Windows system PATH.');
@@ -88,6 +98,8 @@ const systemComSpec = path.join(system32, 'cmd.exe');
 const isolatedSystemPath = [system32, systemRoot].join(path.delimiter);
 await requireFile(systemComSpec, 'Windows command processor');
 await requireFile(path.join(SOURCE_BUNDLE, 'Brightspace Sync.cmd'), 'built launcher');
+await requireFile(path.join(SOURCE_BUNDLE, 'Brightspace Sync.exe'), 'compiled Windows control panel');
+await requireFile(path.join(SOURCE_BUNDLE, 'Brightspace Sync.exe.config'), 'Windows control-panel runtime configuration');
 await requireFile(path.join(SOURCE_BUNDLE, 'runtime', 'node.exe'), 'private Node.js runtime');
 await requireFile(path.join(SOURCE_BUNDLE, 'app', 'src', 'launcher.mjs'), 'packaged application launcher');
 await requireFile(path.join(SOURCE_BUNDLE, 'app', 'node_modules', 'playwright', 'package.json'), 'packaged Playwright dependency');
@@ -108,9 +120,14 @@ try {
   await fs.cp(SOURCE_BUNDLE, portableRoot, { recursive: true });
 
   const privateNode = path.join(portableRoot, 'runtime', 'node.exe');
+  const controlPanel = path.join(portableRoot, 'Brightspace Sync.exe');
   const launcher = path.join(portableRoot, 'Brightspace Sync.cmd');
   const appRoot = path.join(portableRoot, 'app');
   const manifest = JSON.parse(await fs.readFile(path.join(portableRoot, 'bundle-manifest.json'), 'utf8'));
+  assert.equal(manifest.entrypoint, 'Brightspace Sync.cmd', 'Milestone 2A command-line entrypoint must remain compatible');
+  assert.equal(manifest.desktopEntrypoint, 'Brightspace Sync.exe');
+  assert.equal(manifest.desktop?.technology, '.NET Framework 4.8 WinForms');
+  assert.equal(manifest.desktop?.backendSchemaVersion, 1);
   const isolatedEnv = {
     ...process.env,
     PATH: isolatedSystemPath,
@@ -197,6 +214,64 @@ try {
   assert.equal(doctor.stdout.includes(`Mirror: ${mirrorDir}`), true);
   assert.deepEqual(await snapshotTree(portableRoot), before, 'packaged doctor must not modify the application bundle');
 
+  const userConfigFile = path.join(dataDir, 'config.json');
+  const userConfig = JSON.parse(await fs.readFile(userConfigFile, 'utf8'));
+  userConfig.baseUrl = 'https://example.test';
+  await fs.writeFile(userConfigFile, `${JSON.stringify(userConfig, null, 2)}\n`, 'utf8');
+
+  const controlPanelSelfTestFile = path.join(temp, 'control-panel-self-test.json');
+  const controlPanelEnv = { ...isolatedEnv };
+  delete controlPanelEnv.BRIGHTSPACE_SYNC_DEV_BUNDLE_ROOT;
+  const controlPanelSelfTest = await run(controlPanel, ['--self-test', controlPanelSelfTestFile], {
+    cwd: unrelatedCwd,
+    env: controlPanelEnv,
+    label: 'packaged Windows control-panel backend bridge'
+  });
+  assert.equal(controlPanelSelfTest.code, 0, `${controlPanelSelfTest.stdout}\n${controlPanelSelfTest.stderr}`);
+  const controlPanelResult = JSON.parse(await fs.readFile(controlPanelSelfTestFile, 'utf8'));
+  const packagedLauncherModule = path.join(appRoot, 'src', 'launcher.mjs');
+  assert.equal(controlPanelResult.schemaVersion, 1);
+  assert.equal(controlPanelResult.applicationRootContainsSpaces, true, 'packaged GUI root must exercise path handling with spaces');
+  assert.equal(path.resolve(controlPanelResult.applicationRoot).toLowerCase(), path.resolve(portableRoot).toLowerCase());
+  assert.equal(path.resolve(controlPanelResult.nodeExecutable).toLowerCase(), path.resolve(privateNode).toLowerCase());
+  assert.equal(path.resolve(controlPanelResult.processFileName).toLowerCase(), path.resolve(privateNode).toLowerCase());
+  assert.equal(path.resolve(controlPanelResult.quickProcessFileName).toLowerCase(), path.resolve(privateNode).toLowerCase());
+  assert.equal(path.resolve(controlPanelResult.fullProcessFileName).toLowerCase(), path.resolve(privateNode).toLowerCase());
+  assert.equal(path.resolve(controlPanelResult.launcherScript).toLowerCase(), path.resolve(packagedLauncherModule).toLowerCase());
+  assert.equal(path.resolve(controlPanelResult.workingDirectory).toLowerCase(), path.resolve(appRoot).toLowerCase());
+  assert.equal(controlPanelResult.processArguments.includes(`"${packagedLauncherModule}" status --json`), true);
+  assert.equal(controlPanelResult.quickProcessArguments.includes(`"${packagedLauncherModule}" quick`), true);
+  assert.equal(controlPanelResult.fullProcessArguments.includes(`"${packagedLauncherModule}" full`), true);
+  assert.equal(controlPanelResult.useShellExecute, false);
+  assert.equal(controlPanelResult.createNoWindow, true);
+  assert.equal(controlPanelResult.redirectStandardOutput, true);
+  assert.equal(controlPanelResult.redirectStandardError, true);
+  assert.equal(controlPanelResult.statusSchemaVersion, 1);
+  assert.equal(path.resolve(controlPanelResult.statusDataDir).toLowerCase(), path.resolve(dataDir).toLowerCase());
+  assert.equal(path.resolve(controlPanelResult.statusMirrorDir).toLowerCase(), path.resolve(mirrorDir).toLowerCase());
+  assert.equal(path.resolve(controlPanelResult.statusLogsDir).toLowerCase(), path.resolve(path.join(dataDir, 'logs')).toLowerCase());
+  assert.equal(controlPanelResult.statusRefreshIntervalMilliseconds, 5000);
+  assert.equal(controlPanelResult.initialButtonsEnabled, true, 'configured control panel must initially enable sync buttons');
+  assert.equal(controlPanelResult.externalLockStartedDisablesButtons, true, 'an external live lock must disable sync buttons on refresh');
+  assert.equal(controlPanelResult.externalLockFinishedReturnsReady, true, 'removing an external lock must return the same control panel to Ready');
+  assert.equal(controlPanelResult.overlappingPollSkipped, true, 'a status poll must skip while another status refresh is active');
+  assert.equal(controlPanelResult.maximumConcurrentStatusPolls, 1, 'status polls must never overlap');
+  assert.equal(controlPanelResult.sanitizedDiagnosticMaximumCharacters, 4096);
+  assert.equal(controlPanelResult.syntheticSecretsRemoved, true);
+  assert.equal(controlPanelResult.failureLogCreated, true);
+  assert.equal(controlPanelResult.failedGuiOperationLogged, true, 'a failed GUI operation must produce a diagnostic log entry');
+  assert.equal(controlPanelResult.failureLogOmitsRawStdout, true);
+  assert.equal(controlPanelResult.preflightActiveOperationBlockedLaunch, true, 'sync preflight must not launch while another operation is active');
+  const failureLog = await fs.readFile(path.join(dataDir, 'logs', 'backend-failures.log'), 'utf8');
+  for (const forbidden of ['ExampleSecret123', 'fake-token-value', 'fake-value', 'ticket=fake-secret', 'RAW_STDOUT_MUST_NOT_BE_WRITTEN']) {
+    assert.equal(failureLog.includes(forbidden), false, `sanitized failure log retained forbidden synthetic value: ${forbidden}`);
+  }
+  assert.equal(failureLog.includes('[REDACTED'), true, 'failure log must retain a useful redacted diagnostic');
+  assert.deepEqual(await snapshotTree(portableRoot), before, 'packaged control-panel bridge must not modify the application bundle');
+  console.log('Packaged Windows control-panel bridge: PASS');
+  userConfig.baseUrl = '';
+  await fs.writeFile(userConfigFile, `${JSON.stringify(userConfig, null, 2)}\n`, 'utf8');
+
   const packagedBrowserModule = path.join(appRoot, 'src', 'browser.mjs');
   const packagedPlaywrightModule = path.join(appRoot, 'node_modules', 'playwright', 'index.mjs');
   await requireFile(packagedBrowserModule, 'packaged browser-detection implementation');
@@ -280,6 +355,7 @@ try {
   assert.equal(packagedFiles.some(relative => /(?:^|[\\/])(?:config\.json|\.env|_sync_state\.json)$/i.test(relative)), false, 'bundle must not contain runtime configuration, secrets, or legacy state');
   assert.equal(packagedFiles.some(relative => /(?:^|[\\/])(?:BrowserProfile|\.brightspace-profile|BrightspaceMirror)(?:[\\/]|$)/i.test(relative)), false, 'bundle must not contain a browser profile or mirror');
   await assertNoDeveloperPathsOrSensitiveContent(portableRoot, packagedFiles);
+  await assertBinaryOmitsPaths(controlPanel, [ROOT, process.env.USERPROFILE, process.cwd()]);
 
   console.log('Windows portable bundle self-test: PASS');
 } finally {

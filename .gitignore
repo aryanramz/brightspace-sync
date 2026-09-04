@@ -1,6 +1,8 @@
 # Dependencies
 node_modules/
 dist/
+desktop/**/bin/
+desktop/**/obj/
 
 # Legacy source-checkout runtime paths remain ignored for safe upgrades/rollback.
 # SENSITIVE: browser profile may contain cookies, tokens, and saved-login data.
