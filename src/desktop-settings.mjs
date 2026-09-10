@@ -2,9 +2,10 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { randomUUID } from 'node:crypto';
-import { loadAppConfig, withUserConfigTransaction } from './config.mjs';
+import { withUserConfigTransaction } from './config.mjs';
 import { resolveRuntimePaths } from './runtime-paths.mjs';
 import { acquireSyncLock } from './sync-lock.mjs';
+import { normalizeBrightspaceBaseUrl } from './brightspace-url.mjs';
 
 export const DESKTOP_SETTINGS_SCHEMA_VERSION = 1;
 
@@ -53,20 +54,36 @@ async function lstatIfExists(io, value) {
   }
 }
 
+async function pathReachedThroughReparsePoint(value, io) {
+  const normalized = normalizedPath(value);
+  const root = path.parse(normalized).root;
+  const segments = normalized.slice(root.length).split(path.sep).filter(Boolean);
+  let current = root;
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    const entry = await lstatIfExists(io, current);
+    if (!entry) return false;
+    if (entry.isSymbolicLink()) return true;
+  }
+  return false;
+}
+
 export async function canonicalFilesystemPath(value, io = fs) {
   const requestedPath = normalizedPath(value);
   const directEntry = await lstatIfExists(io, requestedPath);
   if (directEntry) {
-    const [physicalPath, stat] = await Promise.all([
+    const [physicalPath, stat, reachedThroughReparsePoint] = await Promise.all([
       io.realpath(requestedPath),
-      io.stat(requestedPath)
+      io.stat(requestedPath),
+      pathReachedThroughReparsePoint(requestedPath, io)
     ]);
     return {
       requestedPath,
       physicalPath: normalizedPath(physicalPath),
       exists: true,
       isDirectory: stat.isDirectory(),
-      isReparsePoint: directEntry.isSymbolicLink()
+      isReparsePoint: directEntry.isSymbolicLink(),
+      reachedThroughReparsePoint
     };
   }
 
@@ -89,7 +106,8 @@ export async function canonicalFilesystemPath(value, io = fs) {
         physicalPath: normalizedPath(path.join(physicalAncestor, ...unresolved)),
         exists: false,
         isDirectory: null,
-        isReparsePoint: false
+        isReparsePoint: false,
+        reachedThroughReparsePoint: await pathReachedThroughReparsePoint(ancestor, io)
       };
     }
 
@@ -103,6 +121,8 @@ export async function canonicalFilesystemPath(value, io = fs) {
 export function normalizeBrightspaceUrl(value) {
   const raw = String(value || '').trim();
   if (!raw) throw validationError('baseUrl', 'required', 'Enter your Brightspace URL.');
+  const normalized = normalizeBrightspaceBaseUrl(raw);
+  if (normalized) return normalized;
   let parsed;
   try { parsed = new URL(raw); } catch {
     throw validationError('baseUrl', 'invalid-url', 'Enter a valid absolute Brightspace URL.');
@@ -110,26 +130,34 @@ export function normalizeBrightspaceUrl(value) {
   if (parsed.protocol !== 'https:' || !parsed.hostname || parsed.username || parsed.password) {
     throw validationError('baseUrl', 'https-required', 'Brightspace URL must use HTTPS and contain a hostname.');
   }
-  parsed.search = '';
-  parsed.hash = '';
-  parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
-  return parsed.href.replace(/\/$/, '');
+  throw validationError('baseUrl', 'invalid-url', 'Enter a safe Brightspace HTTPS URL without embedded credentials.');
 }
 
-function safeSettings({ config, paths }) {
-  let baseUrl = '';
+async function maySuggestFirstRunMirror({ config, paths, raw }, io) {
+  if (paths.mirrorDirOverride || String(raw?.outputDir || '').trim()) return false;
   try {
-    baseUrl = normalizeBrightspaceUrl(config.baseUrl);
+    const [effectiveMirror, generatedDefault] = await Promise.all([
+      canonicalFilesystemPath(config.outputDir, io),
+      canonicalFilesystemPath(paths.defaultMirrorDir, io)
+    ]);
+    if (!sameCanonicalPath(effectiveMirror.physicalPath, generatedDefault.physicalPath)) return false;
+    if (!effectiveMirror.exists) return true;
+    if (!effectiveMirror.isDirectory || effectiveMirror.reachedThroughReparsePoint) return false;
+    return !(await directoryHasMeaningfulContents(effectiveMirror.physicalPath, io));
   } catch {
-    // A malformed or unsafe legacy value must never be reflected through the
-    // desktop settings contract. Reading settings does not rewrite it.
+    return false;
   }
+}
+
+async function safeSettings({ config, paths, raw }, io = fs) {
+  const baseUrl = normalizeBrightspaceBaseUrl(config.baseUrl);
   return {
     schemaVersion: DESKTOP_SETTINGS_SCHEMA_VERSION,
     configured: Boolean(baseUrl),
     baseUrl,
     mirrorDir: config.outputDir,
     mirrorOverrideActive: Boolean(paths.mirrorDirOverride),
+    maySuggestFirstRunMirror: await maySuggestFirstRunMirror({ config, paths, raw }, io),
     drive: {
       enabled: Boolean(config.drivePublish.enabled),
       destination: config.drivePublish.destination || ''
@@ -138,7 +166,11 @@ function safeSettings({ config, paths }) {
 }
 
 export async function getDesktopSettings({ runtime = {} } = {}) {
-  return safeSettings(await loadAppConfig({ mode: 'full', runtime }));
+  return withUserConfigTransaction({
+    mode: 'full',
+    runtime,
+    execute: loaded => safeSettings(loaded)
+  });
 }
 
 async function existsWith(io, value) {
@@ -352,6 +384,7 @@ async function validateRequest(request, loaded, io) {
     mirrorDir: requestedMirror?.physicalPath || '',
     requestedMirrorPath: requestedMirror?.requestedPath || '',
     existingMirrorDir: existingMirror?.physicalPath || '',
+    existingMirrorReachedThroughReparsePoint: Boolean(existingMirror?.reachedThroughReparsePoint),
     driveEnabled,
     driveDestination: driveDestination?.physicalPath || '',
     mirrorAction,
@@ -414,6 +447,12 @@ export async function saveDesktopSettings(request, { runtime = {}, fileSystem = 
         }
 
         const moveRequested = meaningful && normalized.mirrorAction === 'move';
+        if (moveRequested && normalized.existingMirrorReachedThroughReparsePoint) {
+          return settingsFailure(
+            'source-reparse-point',
+            'The current mirror is reached through a filesystem link or junction and cannot be moved automatically. Choose “Use new location” to leave it untouched.'
+          );
+        }
         let movement = { moved: false, async commit() {}, async rollback() {} };
         if (moveRequested) {
           try {
@@ -474,7 +513,7 @@ export async function saveDesktopSettings(request, { runtime = {}, fileSystem = 
         return {
           schemaVersion: DESKTOP_SETTINGS_SCHEMA_VERSION,
           ok: true,
-          settings: safeSettings({ config: committedConfig, paths: loaded.paths }),
+          settings: await safeSettings({ config: committedConfig, paths: loaded.paths, raw: next }, io),
           mirrorMoved: movement.moved
         };
       }

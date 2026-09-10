@@ -16,6 +16,7 @@ export const BUNDLED_NODE_ARCHIVE_SHA256 = '6cac9ffbca8f6a47091e4b5c772e0606049c
 export const BUNDLED_NODE_ARCHIVE_URL = `https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${BUNDLED_NODE_ARCHIVE}`;
 
 const RUNTIME_SOURCE_FILES = [
+  'brightspace-url.mjs',
   'browser.mjs',
   'config.mjs',
   'courseFolders.mjs',

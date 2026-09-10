@@ -89,12 +89,95 @@ namespace BrightspaceSync.ControlPanel
                     baseUrl = String.Empty,
                     mirrorDir = initialSettings.mirrorDir,
                     mirrorOverrideActive = false,
+                    maySuggestFirstRunMirror = true,
                     drive = new DesktopDriveSettings { enabled = false, destination = String.Empty }
                 };
                 string firstRunMirror;
                 using (var settingsForm = new SetupSettingsForm(cancelBackend, freshFormSettings, true, new NullFolderPicker()))
                     firstRunMirror = settingsForm.RequestForSelfTest().mirrorDir;
                 bool firstRunUsesKnownDocuments = String.Equals(firstRunMirror, SetupSettingsForm.SuggestedFirstRunMirror(), StringComparison.OrdinalIgnoreCase);
+
+                DesktopSettings customMissingUrlSettings = new DesktopSettings
+                {
+                    schemaVersion = 1,
+                    configured = false,
+                    baseUrl = String.Empty,
+                    mirrorDir = Path.Combine(status.mirrorDir, "Existing Custom Mirror"),
+                    mirrorOverrideActive = false,
+                    maySuggestFirstRunMirror = false,
+                    drive = new DesktopDriveSettings { enabled = false, destination = String.Empty }
+                };
+                string customFirstRunMirror;
+                using (var settingsForm = new SetupSettingsForm(cancelBackend, customMissingUrlSettings, true, new NullFolderPicker()))
+                    customFirstRunMirror = settingsForm.RequestForSelfTest().mirrorDir;
+                bool firstRunPreservesCustomMirror = String.Equals(customFirstRunMirror, customMissingUrlSettings.mirrorDir, StringComparison.OrdinalIgnoreCase);
+
+                DesktopSettings meaningfulDefaultSettings = new DesktopSettings
+                {
+                    schemaVersion = 1,
+                    configured = false,
+                    baseUrl = String.Empty,
+                    mirrorDir = initialSettings.mirrorDir,
+                    mirrorOverrideActive = false,
+                    maySuggestFirstRunMirror = false,
+                    drive = new DesktopDriveSettings { enabled = false, destination = String.Empty }
+                };
+                string meaningfulFirstRunMirror;
+                using (var settingsForm = new SetupSettingsForm(cancelBackend, meaningfulDefaultSettings, true, new NullFolderPicker()))
+                    meaningfulFirstRunMirror = settingsForm.RequestForSelfTest().mirrorDir;
+                bool firstRunPreservesMeaningfulDefault = String.Equals(meaningfulFirstRunMirror, meaningfulDefaultSettings.mirrorDir, StringComparison.OrdinalIgnoreCase);
+
+                DesktopSettings overrideFirstRunSettings = new DesktopSettings
+                {
+                    schemaVersion = 1,
+                    configured = false,
+                    baseUrl = String.Empty,
+                    mirrorDir = currentSettings.mirrorDir,
+                    mirrorOverrideActive = true,
+                    maySuggestFirstRunMirror = false,
+                    drive = new DesktopDriveSettings { enabled = false, destination = String.Empty }
+                };
+                bool firstRunPreservesEnvironmentOverride;
+                using (var settingsForm = new SetupSettingsForm(cancelBackend, overrideFirstRunSettings, true, new NullFolderPicker()))
+                {
+                    firstRunPreservesEnvironmentOverride =
+                        String.Equals(settingsForm.RequestForSelfTest().mirrorDir, overrideFirstRunSettings.mirrorDir, StringComparison.OrdinalIgnoreCase)
+                        && !settingsForm.MirrorEditableForSelfTest;
+                }
+
+                string recoveryOld = Path.Combine(status.mirrorDir, "Recovery Old");
+                string recoveryNew = Path.Combine(status.mirrorDir, "Recovery New");
+                string recoveryJson = new JavaScriptSerializer().Serialize(new
+                {
+                    schemaVersion = 1,
+                    ok = false,
+                    errors = new[] { new { field = "mirrorDir", code = "mirror-rollback-failed", message = "Automatic rollback did not complete." } },
+                    recovery = new
+                    {
+                        required = true,
+                        oldMirrorDir = recoveryOld,
+                        newMirrorDir = recoveryNew,
+                        configRetainedOldLocation = true
+                    }
+                });
+                SettingsSaveResponse recoveryResponse = backend.ParseSettingsSaveResponseForSelfTest(recoveryJson);
+                bool recoverySurvivesBackendBridge = recoveryResponse.recovery != null
+                    && recoveryResponse.recovery.required
+                    && recoveryResponse.recovery.configRetainedOldLocation
+                    && recoveryResponse.recovery.oldMirrorDir == recoveryOld
+                    && recoveryResponse.recovery.newMirrorDir == recoveryNew;
+                var recoveryBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 }, recoveryResponse);
+                bool recoveryPresentedToUi;
+                using (var settingsForm = new SetupSettingsForm(recoveryBackend, currentSettings, false, new NullFolderPicker()))
+                {
+                    bool recoverySaveResult = await settingsForm.SaveForSelfTestAsync(null);
+                    string recoveryText = settingsForm.ValidationTextForSelfTest;
+                    recoveryPresentedToUi = !recoverySaveResult
+                        && recoveryText.IndexOf("Manual recovery may be required", StringComparison.OrdinalIgnoreCase) >= 0
+                        && recoveryText.Contains(recoveryOld)
+                        && recoveryText.Contains(recoveryNew)
+                        && recoveryText.IndexOf("still point", StringComparison.OrdinalIgnoreCase) >= 0;
+                }
 
                 stage = "status polling behavior";
                 bool initialButtonsEnabled;
@@ -269,9 +352,14 @@ namespace BrightspaceSync.ControlPanel
                     firstRunSetupTriggered = firstRunSetupTriggered,
                     firstRunCancelDisabledSync = firstRunCancelDisabledSync,
                     firstRunUsesKnownDocuments = firstRunUsesKnownDocuments,
+                    firstRunPreservesCustomMirror = firstRunPreservesCustomMirror,
+                    firstRunPreservesMeaningfulDefault = firstRunPreservesMeaningfulDefault,
+                    firstRunPreservesEnvironmentOverride = firstRunPreservesEnvironmentOverride,
                     settingsCancelSavesNothing = settingsCancelSavesNothing,
                     sharedSettingsFormSavesThroughBackend = sharedSettingsFormSavesThroughBackend,
                     environmentOverrideIsReadOnly = environmentOverrideIsReadOnly,
+                    recoverySurvivesBackendBridge = recoverySurvivesBackendBridge,
+                    recoveryPresentedToUi = recoveryPresentedToUi,
                     statusRefreshIntervalMilliseconds = MainForm.StatusRefreshIntervalMilliseconds,
                     initialButtonsEnabled = initialButtonsEnabled,
                     externalLockStartedDisablesButtons = externalLockStartedDisablesButtons,
@@ -446,11 +534,18 @@ namespace BrightspaceSync.ControlPanel
     {
         private readonly BackendStatus _status;
         private readonly BackendProcessResult _result;
+        private readonly SettingsSaveResponse _settingsSaveResponse;
 
         internal ScriptedBackendClient(BackendStatus status, BackendProcessResult result)
+            : this(status, result, null)
+        {
+        }
+
+        internal ScriptedBackendClient(BackendStatus status, BackendProcessResult result, SettingsSaveResponse settingsSaveResponse)
         {
             _status = status;
             _result = result;
+            _settingsSaveResponse = settingsSaveResponse;
         }
 
         internal int SyncCalls { get; private set; }
@@ -483,6 +578,8 @@ namespace BrightspaceSync.ControlPanel
         public Task<SettingsSaveResponse> SaveSettingsAsync(SettingsSaveRequest request)
         {
             SaveCalls++;
+            if (_settingsSaveResponse != null)
+                return Task.FromResult(_settingsSaveResponse);
             return Task.FromResult(new SettingsSaveResponse
             {
                 schemaVersion = 1,

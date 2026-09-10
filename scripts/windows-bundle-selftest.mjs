@@ -269,9 +269,14 @@ try {
   assert.equal(controlPanelResult.firstRunSetupTriggered, true, 'unconfigured startup must invoke the shared first-run settings flow');
   assert.equal(controlPanelResult.firstRunCancelDisabledSync, true, 'cancelling first-run setup must leave sync disabled');
   assert.equal(controlPanelResult.firstRunUsesKnownDocuments, true, 'fresh setup must use the Windows Documents known folder default');
+  assert.equal(controlPanelResult.firstRunPreservesCustomMirror, true, 'first-run URL repair must preserve an existing custom mirror');
+  assert.equal(controlPanelResult.firstRunPreservesMeaningfulDefault, true, 'first-run URL repair must preserve a meaningful generated mirror');
+  assert.equal(controlPanelResult.firstRunPreservesEnvironmentOverride, true, 'first-run setup must preserve an environment-controlled mirror');
   assert.equal(controlPanelResult.settingsCancelSavesNothing, true, 'cancelling Settings must not call the save bridge');
   assert.equal(controlPanelResult.sharedSettingsFormSavesThroughBackend, true, 'the shared setup/settings form must save only through the backend client');
   assert.equal(controlPanelResult.environmentOverrideIsReadOnly, true, 'an environment-controlled mirror must not appear editable in Settings');
+  assert.equal(controlPanelResult.recoverySurvivesBackendBridge, true, 'mirror recovery details must survive JSON deserialization');
+  assert.equal(controlPanelResult.recoveryPresentedToUi, true, 'mirror recovery details must be presented by the Settings UI');
   assert.equal(controlPanelResult.statusRefreshIntervalMilliseconds, 5000);
   assert.equal(controlPanelResult.initialButtonsEnabled, true, 'configured control panel must initially enable sync buttons');
   assert.equal(controlPanelResult.externalLockStartedDisablesButtons, true, 'an external live lock must disable sync buttons on refresh');

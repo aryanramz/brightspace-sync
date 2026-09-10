@@ -170,6 +170,8 @@ namespace BrightspaceSync.ControlPanel
 
         internal bool MirrorEditableForSelfTest { get { return !_mirrorDir.ReadOnly && _mirrorBrowse.Enabled; } }
 
+        internal string ValidationTextForSelfTest { get { return _validation.Text; } }
+
         internal Task<bool> SaveForSelfTestAsync(string mirrorAction)
         {
             return SaveAsync(mirrorAction, false);
@@ -182,9 +184,24 @@ namespace BrightspaceSync.ControlPanel
 
         private static string InitialMirrorPath(DesktopSettings settings, bool firstRun)
         {
-            if (firstRun && !settings.configured && !settings.mirrorOverrideActive)
+            if (firstRun && settings.maySuggestFirstRunMirror && !settings.mirrorOverrideActive)
                 return SuggestedFirstRunMirror();
             return settings.mirrorDir ?? String.Empty;
+        }
+
+        internal static string MirrorRecoveryMessage(SettingsSaveResponse response)
+        {
+            MirrorRecoveryInformation recovery = response == null ? null : response.recovery;
+            if (recovery == null || !recovery.required)
+                return "Automatic mirror recovery did not complete. Manual recovery may be required.";
+
+            string message =
+                "Automatic mirror recovery did not complete. Manual recovery may be required.\n\n" +
+                "Old mirror: " + (recovery.oldMirrorDir ?? String.Empty) + "\n" +
+                "New mirror: " + (recovery.newMirrorDir ?? String.Empty);
+            if (recovery.configRetainedOldLocation)
+                message += "\n\nSettings still point to the old mirror location.";
+            return message;
         }
 
         private static Label CreateLabel(string text, int x, int y)
@@ -266,6 +283,21 @@ namespace BrightspaceSync.ControlPanel
                 }
 
                 SettingsValidationError error = response.errors == null ? null : response.errors.FirstOrDefault();
+                if (error != null && error.code == "mirror-rollback-failed")
+                {
+                    string recoveryMessage = MirrorRecoveryMessage(response);
+                    _validation.Text = recoveryMessage;
+                    if (interactive)
+                    {
+                        MessageBox.Show(
+                            this,
+                            recoveryMessage,
+                            "Mirror recovery required",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Warning);
+                    }
+                    return false;
+                }
                 _validation.Text = error == null ? "Settings could not be saved." : error.message;
                 return false;
             }

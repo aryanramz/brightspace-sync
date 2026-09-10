@@ -92,6 +92,35 @@ try {
   assert.ok(migrated.migrations.some(action => action.action === 'migrate-config-version' && action.fromVersion === 0 && action.toVersion === 1));
   assert.equal((await loadAppConfig({ runtime: legacyRuntime })).migrations.length, 0);
 
+  const unsafeUrlRuntime = await makeRuntime(tmp, 'Unsafe Legacy URL');
+  const unsafeUrlPaths = resolveRuntimePaths(unsafeUrlRuntime);
+  await fs.mkdir(unsafeUrlPaths.dataDir, { recursive: true });
+  const unsafeUrlMarker = 'RuntimeUserInfoSecret123';
+  const unsafeUrlRaw = {
+    configVersion: CURRENT_CONFIG_VERSION,
+    baseUrl: `https://legacy-user:${unsafeUrlMarker}@example.test/course?token=RuntimeQuerySecret123#RuntimeFragmentSecret123`,
+    outputDir: ''
+  };
+  const unsafeUrlBytes = `${JSON.stringify(unsafeUrlRaw, null, 2)}\n`;
+  await fs.writeFile(unsafeUrlPaths.configFile, unsafeUrlBytes);
+  const unsafeUrlLoaded = await loadAppConfig({ runtime: unsafeUrlRuntime });
+  assert.equal(unsafeUrlLoaded.config.baseUrl, '', 'runtime config must treat a legacy URL containing userinfo as unconfigured');
+  assert.equal(await fs.readFile(unsafeUrlPaths.configFile, 'utf8'), unsafeUrlBytes, 'runtime URL normalization must not rewrite legacy config');
+
+  const queryUrlRuntime = await makeRuntime(tmp, 'Legacy Query URL');
+  const queryUrlPaths = resolveRuntimePaths(queryUrlRuntime);
+  await fs.mkdir(queryUrlPaths.dataDir, { recursive: true });
+  const queryUrlRaw = {
+    configVersion: CURRENT_CONFIG_VERSION,
+    baseUrl: 'https://example.test/course?token=RuntimeQuerySecret123#RuntimeFragmentSecret123',
+    outputDir: ''
+  };
+  const queryUrlBytes = `${JSON.stringify(queryUrlRaw, null, 2)}\n`;
+  await fs.writeFile(queryUrlPaths.configFile, queryUrlBytes);
+  const queryUrlLoaded = await loadAppConfig({ runtime: queryUrlRuntime });
+  assert.equal(queryUrlLoaded.config.baseUrl, 'https://example.test/course', 'runtime config must remove URL query strings and fragments in memory');
+  assert.equal(await fs.readFile(queryUrlPaths.configFile, 'utf8'), queryUrlBytes, 'safe in-memory URL normalization must not rewrite config');
+
   const futureRuntime = await makeRuntime(tmp, 'Future');
   const futurePaths = resolveRuntimePaths(futureRuntime);
   await fs.mkdir(futurePaths.dataDir, { recursive: true });

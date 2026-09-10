@@ -3,6 +3,7 @@ import path from 'node:path';
 import { ensureDir, exists, writeJsonAtomic } from './utils.mjs';
 import { resolveConfiguredPath, resolveRuntimePaths } from './runtime-paths.mjs';
 import { acquireInitializationLock, initializationLockError } from './init-lock.mjs';
+import { normalizeBrightspaceBaseUrl } from './brightspace-url.mjs';
 
 export const CURRENT_CONFIG_VERSION = 1;
 
@@ -261,7 +262,10 @@ export async function loadAppConfigUnderLock({ mode, paths }) {
       indexExternalAssets: true,
       ...(raw.assetPolicy || {})
     },
-    baseUrl: String(raw.baseUrl || '').replace(/\/$/, ''),
+    // Runtime consumers only receive a safe, normalized URL. The raw value is
+    // deliberately left untouched so read-only inspection does not rewrite a
+    // legacy configuration.
+    baseUrl: normalizeBrightspaceBaseUrl(raw.baseUrl),
     browserExecutablePath: raw.browserExecutablePath
       ? resolveConfiguredPath(raw.browserExecutablePath, { relativeTo: paths.dataDir, fallback: '' })
       : '',

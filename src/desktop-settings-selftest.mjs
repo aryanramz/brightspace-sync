@@ -155,7 +155,7 @@ try {
   const basicRuntime = await makeRuntime(temp, 'Basic');
   const basicPaths = resolveRuntimePaths(basicRuntime);
   const initial = await getDesktopSettings({ runtime: basicRuntime });
-  assert.deepEqual(Object.keys(initial).sort(), ['baseUrl', 'configured', 'drive', 'mirrorDir', 'mirrorOverrideActive', 'schemaVersion']);
+  assert.deepEqual(Object.keys(initial).sort(), ['baseUrl', 'configured', 'drive', 'maySuggestFirstRunMirror', 'mirrorDir', 'mirrorOverrideActive', 'schemaVersion']);
   assert.deepEqual(Object.keys(initial.drive).sort(), ['destination', 'enabled']);
   assert.equal(initial.schemaVersion, 1);
   assert.equal(initial.configured, false);
@@ -163,6 +163,7 @@ try {
   assert.equal(initial.drive.enabled, false);
   assert.equal(initial.drive.destination, '');
   assert.equal(initial.mirrorOverrideActive, false);
+  assert.equal(initial.maySuggestFirstRunMirror, true, 'a genuinely fresh generated mirror may use the Windows known-folder suggestion');
 
   const unsafeReadCases = [
     {
@@ -214,6 +215,29 @@ try {
     }
     assert.equal(await fs.readFile(unsafePaths.configFile, 'utf8'), unsafeBytes, 'reading unsafe legacy settings must not rewrite config');
   }
+
+  const missingUrlCustomRuntime = await makeRuntime(temp, 'Missing URL Custom Mirror');
+  const missingUrlCustomPaths = resolveRuntimePaths(missingUrlCustomRuntime);
+  await getDesktopSettings({ runtime: missingUrlCustomRuntime });
+  const missingUrlCustomRaw = await rawConfig(missingUrlCustomRuntime);
+  const missingUrlCustomMirror = path.join(temp, 'Missing URL Custom Mirror', 'Existing School Files');
+  missingUrlCustomRaw.baseUrl = '';
+  missingUrlCustomRaw.outputDir = missingUrlCustomMirror;
+  await fs.writeFile(missingUrlCustomPaths.configFile, `${JSON.stringify(missingUrlCustomRaw, null, 2)}\n`);
+  const missingUrlCustom = await getDesktopSettings({ runtime: missingUrlCustomRuntime });
+  assert.equal(missingUrlCustom.configured, false);
+  assert.equal(missingUrlCustom.mirrorDir, missingUrlCustomMirror);
+  assert.equal(missingUrlCustom.maySuggestFirstRunMirror, false, 'a custom mirror must be preserved while repairing a missing URL');
+
+  const meaningfulDefaultRuntime = await makeRuntime(temp, 'Meaningful Generated Mirror');
+  const meaningfulDefaultPaths = resolveRuntimePaths(meaningfulDefaultRuntime);
+  await getDesktopSettings({ runtime: meaningfulDefaultRuntime });
+  await fs.mkdir(meaningfulDefaultPaths.defaultMirrorDir, { recursive: true });
+  await fs.writeFile(path.join(meaningfulDefaultPaths.defaultMirrorDir, 'existing-course.txt'), 'preserve me');
+  const meaningfulDefault = await getDesktopSettings({ runtime: meaningfulDefaultRuntime });
+  assert.equal(meaningfulDefault.configured, false);
+  assert.equal(meaningfulDefault.mirrorDir, meaningfulDefaultPaths.defaultMirrorDir);
+  assert.equal(meaningfulDefault.maySuggestFirstRunMirror, false, 'a generated default containing files must not be replaced by a UI suggestion');
 
   const initialBytes = await fs.readFile(basicPaths.configFile, 'utf8');
   for (const invalid of ['', 'not a url', 'http://example.test', 'javascript:alert(1)', 'file:///tmp/example', 'data:text/plain,test']) {
@@ -520,6 +544,37 @@ try {
     assert.equal(await fs.readFile(path.join(actualMirror, 'course.txt'), 'utf8'), 'alias-safe');
   }
 
+  const sourceAliasRuntime = await makeRuntime(temp, 'Source Reparse');
+  const sourceAliasPaths = resolveRuntimePaths(sourceAliasRuntime);
+  await getDesktopSettings({ runtime: sourceAliasRuntime });
+  const sourceTarget = path.join(temp, 'Source Reparse', 'Physical Mirror');
+  const sourceAlias = path.join(temp, 'Source Reparse', 'Configured Mirror Alias');
+  const sourceNew = path.join(temp, 'Source Reparse', 'New Mirror');
+  await fs.mkdir(sourceTarget, { recursive: true });
+  await fs.writeFile(path.join(sourceTarget, 'course.txt'), 'do not move through alias');
+  const sourceAliasSupported = await createDirectoryAlias(sourceTarget, sourceAlias);
+  if (sourceAliasSupported) {
+    const sourceRaw = await rawConfig(sourceAliasRuntime);
+    sourceRaw.baseUrl = 'https://example.test';
+    sourceRaw.outputDir = sourceAlias;
+    const sourceRawBytes = `${JSON.stringify(sourceRaw, null, 2)}\n`;
+    await fs.writeFile(sourceAliasPaths.configFile, sourceRawBytes);
+
+    const sourceMove = await saveDesktopSettings(request('https://example.test', sourceNew, { mirrorAction: 'move' }), { runtime: sourceAliasRuntime });
+    assert.equal(errorCode(sourceMove, 'source-reparse-point'), true, 'automatic move must reject a configured source reached through a reparse point');
+    assert.equal(await fs.readFile(sourceAliasPaths.configFile, 'utf8'), sourceRawBytes);
+    assert.equal((await fs.lstat(sourceAlias)).isSymbolicLink(), true);
+    assert.equal(await fs.readFile(path.join(sourceTarget, 'course.txt'), 'utf8'), 'do not move through alias');
+    await assert.rejects(fs.access(sourceNew));
+
+    const sourceUseNew = await saveDesktopSettings(request('https://example.test', sourceNew, { mirrorAction: 'use-new' }), { runtime: sourceAliasRuntime });
+    assert.equal(sourceUseNew.ok, true, 'use-new must remain available for a reparse-point source');
+    assert.equal(sourceUseNew.mirrorMoved, false);
+    assert.equal((await fs.lstat(sourceAlias)).isSymbolicLink(), true);
+    assert.equal(await fs.readFile(path.join(sourceTarget, 'course.txt'), 'utf8'), 'do not move through alias');
+    assert.equal((await rawConfig(sourceAliasRuntime)).outputDir, await physicalPath(sourceNew));
+  }
+
   const exdevRuntime = await makeRuntime(temp, 'EXDEV Fallback');
   const exdevOld = path.join(temp, 'EXDEV Fallback', 'Old Mirror');
   const exdevNew = path.join(temp, 'EXDEV Fallback', 'New Mirror');
@@ -627,6 +682,7 @@ try {
   const overridePaths = resolveRuntimePaths(overrideRuntime);
   const overrideSettings = await getDesktopSettings({ runtime: overrideRuntime });
   assert.equal(overrideSettings.mirrorOverrideActive, true);
+  assert.equal(overrideSettings.maySuggestFirstRunMirror, false, 'an environment-controlled mirror must never be replaced by a first-run suggestion');
   await assertSamePhysicalPath(overrideSettings.mirrorDir, overrideRoot);
   const misleading = await saveDesktopSettings(request('https://example.test', path.join(temp, 'Override', 'Different')), { runtime: overrideRuntime });
   assert.equal(errorCode(misleading, 'environment-override-active'), true);
@@ -656,7 +712,7 @@ try {
     assert.equal(configKeys.includes(forbiddenKey), false, `settings config introduced forbidden key: ${forbiddenKey}`);
   }
 
-  console.log(`Canonical alias coverage: filesystem alias ${aliasesSupported ? 'PASS' : 'SKIPPED (unsupported)'}; DOS 8.3 alias ${shortAliasTested ? 'PASS' : 'SKIPPED (unavailable)'}`);
+  console.log(`Canonical alias coverage: filesystem alias ${aliasesSupported ? 'PASS' : 'SKIPPED (unsupported)'}; source reparse ${sourceAliasSupported ? 'PASS' : 'SKIPPED (unsupported)'}; DOS 8.3 alias ${shortAliasTested ? 'PASS' : 'SKIPPED (unavailable)'}`);
   console.log('Desktop settings self-test: PASS');
 } finally {
   await fs.rm(temp, { recursive: true, force: true });

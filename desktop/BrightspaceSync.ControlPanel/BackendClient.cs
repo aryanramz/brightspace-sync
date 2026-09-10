@@ -79,6 +79,7 @@ namespace BrightspaceSync.ControlPanel
         public string baseUrl { get; set; }
         public string mirrorDir { get; set; }
         public bool mirrorOverrideActive { get; set; }
+        public bool maySuggestFirstRunMirror { get; set; }
         public DesktopDriveSettings drive { get; set; }
     }
 
@@ -105,6 +106,14 @@ namespace BrightspaceSync.ControlPanel
         public string newMirrorDir { get; set; }
     }
 
+    internal sealed class MirrorRecoveryInformation
+    {
+        public bool required { get; set; }
+        public string oldMirrorDir { get; set; }
+        public string newMirrorDir { get; set; }
+        public bool configRetainedOldLocation { get; set; }
+    }
+
     internal sealed class SettingsSaveResponse
     {
         public int schemaVersion { get; set; }
@@ -113,6 +122,7 @@ namespace BrightspaceSync.ControlPanel
         public bool mirrorMoved { get; set; }
         public SettingsValidationError[] errors { get; set; }
         public MirrorRelocationRequest relocation { get; set; }
+        public MirrorRecoveryInformation recovery { get; set; }
     }
 
     internal sealed class BackendCommandException : Exception
@@ -291,7 +301,18 @@ namespace BrightspaceSync.ControlPanel
             if (result.ExitCode != 0)
                 throw new BackendCommandException("The Brightspace Sync backend could not save settings.", result.ExitCode);
 
-            SettingsSaveResponse response = DeserializeResponse<SettingsSaveResponse>(result.StandardOutput, "settings save");
+            SettingsSaveResponse response = ParseSettingsSaveResponse(result.StandardOutput);
+            return response;
+        }
+
+        internal SettingsSaveResponse ParseSettingsSaveResponseForSelfTest(string standardOutput)
+        {
+            return ParseSettingsSaveResponse(standardOutput);
+        }
+
+        private SettingsSaveResponse ParseSettingsSaveResponse(string standardOutput)
+        {
+            SettingsSaveResponse response = DeserializeResponse<SettingsSaveResponse>(standardOutput, "settings save");
             if (response == null || response.schemaVersion != SupportedStatusSchemaVersion)
                 throw new InvalidDataException("The Brightspace Sync backend settings-save schema is not supported.");
             if (response.ok)
