@@ -6,6 +6,7 @@ import process from 'node:process';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { DESKTOP_STATUS_SCHEMA_VERSION, getDesktopStatus } from './desktop-backend.mjs';
+import { getDesktopSettings } from './desktop-settings.mjs';
 import { resolveRuntimePaths } from './runtime-paths.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -127,6 +128,52 @@ try {
   assert.equal(response.mirrorDir, mirrorDir);
   assert.equal(response.dataDir, dataDir);
   assertNoSensitiveFields(response);
+
+  const unsafeDataDir = path.join(temp, 'Unsafe URL Data');
+  const unsafeRuntime = {
+    appRoot: ROOT,
+    env: {
+      ...process.env,
+      BRIGHTSPACE_SYNC_DATA_DIR: unsafeDataDir,
+      BRIGHTSPACE_SYNC_MIRROR_DIR: path.join(temp, 'Unsafe URL Mirror')
+    }
+  };
+  const unsafePaths = resolveRuntimePaths(unsafeRuntime);
+  await getDesktopStatus({ runtime: unsafeRuntime });
+  const unsafeRaw = JSON.parse(await fs.readFile(unsafePaths.configFile, 'utf8'));
+  const unsafeMarkers = ['RuntimeUserInfoSecret123', 'RuntimeQuerySecret123', 'RuntimeFragmentSecret123'];
+  unsafeRaw.baseUrl = `https://legacy-user:${unsafeMarkers[0]}@example.test/course?token=${unsafeMarkers[1]}#${unsafeMarkers[2]}`;
+  const unsafeBytes = `${JSON.stringify(unsafeRaw, null, 2)}\n`;
+  await fs.writeFile(unsafePaths.configFile, unsafeBytes);
+
+  const unsafeStatus = await getDesktopStatus({ runtime: unsafeRuntime });
+  const unsafeSettings = await getDesktopSettings({ runtime: unsafeRuntime });
+  assert.equal(unsafeStatus.configured, false);
+  assert.equal(unsafeStatus.baseUrlConfigured, false);
+  assert.equal(unsafeSettings.configured, false);
+  assert.equal(unsafeSettings.baseUrl, '');
+  assert.equal(await fs.readFile(unsafePaths.configFile, 'utf8'), unsafeBytes, 'status/settings inspection must not rewrite an unsafe legacy URL');
+
+  let emitted = `${JSON.stringify(unsafeStatus)}\n${JSON.stringify(unsafeSettings)}`;
+  for (const command of ['quick', 'full']) {
+    const unsafeSync = await run(process.execPath, [path.join(ROOT, 'src', 'launcher.mjs'), command], {
+      cwd: temp,
+      env: unsafeRuntime.env
+    });
+    assert.notEqual(unsafeSync.code, 0, `${command} sync must reject an unsafe legacy URL`);
+    assert.match(`${unsafeSync.stdout}\n${unsafeSync.stderr}`, /baseUrl is missing/i, 'unsafe URL must fail before browser navigation');
+    emitted += `\n${unsafeSync.stdout}\n${unsafeSync.stderr}`;
+  }
+  let logText = '';
+  for (const name of await fs.readdir(unsafePaths.logsDir)) {
+    const file = path.join(unsafePaths.logsDir, name);
+    if ((await fs.stat(file)).isFile()) logText += await fs.readFile(file, 'utf8');
+  }
+  for (const marker of unsafeMarkers) {
+    assert.equal(emitted.includes(marker), false, `unsafe URL marker escaped through status, settings, or sync output: ${marker}`);
+    assert.equal(logText.includes(marker), false, `unsafe URL marker escaped into runtime logs: ${marker}`);
+  }
+  assert.equal(await fs.readFile(unsafePaths.configFile, 'utf8'), unsafeBytes, 'rejected sync must not rewrite an unsafe legacy URL');
 
   console.log('Desktop backend contract self-test: PASS');
 } finally {

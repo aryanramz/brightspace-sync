@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Read-focused Brightspace mirror for Windows with QUICK/FULL modes, term-scoped archives, optional Drive publishing, scheduling, and overlap-safe run locking.",
   "scripts": {
+    "syntax-check": "node scripts/syntax-check.mjs",
     "sync": "node src/launcher.mjs full",
     "full": "node src/launcher.mjs full",
     "quick": "node src/launcher.mjs quick",
@@ -24,6 +25,7 @@
     "runtime-paths-selftest": "node src/runtime-paths-selftest.mjs",
     "runtime-foundation-selftest": "node src/runtime-foundation-selftest.mjs",
     "desktop-backend-selftest": "node src/desktop-backend-selftest.mjs",
+    "desktop-settings-selftest": "node src/desktop-settings-selftest.mjs",
     "build:windows-control-panel": "node scripts/build-windows-control-panel.mjs",
     "build:windows-bundle": "node scripts/build-windows-bundle.mjs",
     "windows-bundle-selftest": "node scripts/windows-bundle-selftest.mjs",

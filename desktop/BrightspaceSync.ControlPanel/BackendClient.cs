@@ -66,6 +66,65 @@ namespace BrightspaceSync.ControlPanel
         internal string StandardError { get; set; }
     }
 
+    internal sealed class DesktopDriveSettings
+    {
+        public bool enabled { get; set; }
+        public string destination { get; set; }
+    }
+
+    internal sealed class DesktopSettings
+    {
+        public int schemaVersion { get; set; }
+        public bool configured { get; set; }
+        public string baseUrl { get; set; }
+        public string mirrorDir { get; set; }
+        public bool mirrorOverrideActive { get; set; }
+        public bool maySuggestFirstRunMirror { get; set; }
+        public DesktopDriveSettings drive { get; set; }
+    }
+
+    internal sealed class SettingsSaveRequest
+    {
+        public int schemaVersion { get; set; }
+        public string baseUrl { get; set; }
+        public string mirrorDir { get; set; }
+        public DesktopDriveSettings drive { get; set; }
+        public string mirrorAction { get; set; }
+    }
+
+    internal sealed class SettingsValidationError
+    {
+        public string field { get; set; }
+        public string code { get; set; }
+        public string message { get; set; }
+    }
+
+    internal sealed class MirrorRelocationRequest
+    {
+        public bool required { get; set; }
+        public string oldMirrorDir { get; set; }
+        public string newMirrorDir { get; set; }
+    }
+
+    internal sealed class MirrorRecoveryInformation
+    {
+        public bool required { get; set; }
+        public string oldMirrorDir { get; set; }
+        public string newMirrorDir { get; set; }
+        public bool configRetainedOldLocation { get; set; }
+    }
+
+    internal sealed class SettingsSaveResponse
+    {
+        public int schemaVersion { get; set; }
+        public bool ok { get; set; }
+        public DesktopSettings settings { get; set; }
+        public bool mirrorMoved { get; set; }
+        public SettingsValidationError[] errors { get; set; }
+        public MirrorRelocationRequest relocation { get; set; }
+        public MirrorRecoveryInformation recovery { get; set; }
+    }
+
     internal sealed class BackendCommandException : Exception
     {
         internal int ExitCode { get; private set; }
@@ -108,6 +167,8 @@ namespace BrightspaceSync.ControlPanel
     internal interface IDesktopBackendClient
     {
         Task<BackendStatus> GetStatusAsync();
+        Task<DesktopSettings> GetSettingsAsync();
+        Task<SettingsSaveResponse> SaveSettingsAsync(SettingsSaveRequest request);
         Task<BackendProcessResult> RunSyncAsync(string mode);
     }
 
@@ -125,6 +186,16 @@ namespace BrightspaceSync.ControlPanel
         internal BackendPaths Paths { get { return _paths; } }
 
         internal ProcessStartInfo CreateStartInfo(string command, params string[] arguments)
+        {
+            return CreateStartInfo(command, false, arguments);
+        }
+
+        internal ProcessStartInfo CreateSettingsSaveStartInfo()
+        {
+            return CreateStartInfo("settings", true, "save", "--json");
+        }
+
+        private ProcessStartInfo CreateStartInfo(string command, bool redirectStandardInput, params string[] arguments)
         {
             if (String.IsNullOrWhiteSpace(command)) throw new ArgumentException("A backend command is required.", "command");
 
@@ -145,7 +216,8 @@ namespace BrightspaceSync.ControlPanel
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
                 RedirectStandardOutput = true,
-                RedirectStandardError = true
+                RedirectStandardError = true,
+                RedirectStandardInput = redirectStandardInput
             };
             startInfo.EnvironmentVariables["BRIGHTSPACE_SYNC_GUI"] = "1";
             return startInfo;
@@ -153,18 +225,28 @@ namespace BrightspaceSync.ControlPanel
 
         internal async Task<BackendProcessResult> RunAsync(string command, params string[] arguments)
         {
+            return await RunProcessAsync(command, null, arguments);
+        }
+
+        private async Task<BackendProcessResult> RunProcessAsync(string command, string standardInput, params string[] arguments)
+        {
             var stdout = new BoundedOutputBuffer(32768);
             var stderr = new BoundedOutputBuffer(32768);
 
             using (var process = new Process())
             {
-                process.StartInfo = CreateStartInfo(command, arguments);
+                process.StartInfo = CreateStartInfo(command, standardInput != null, arguments);
                 process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) { stdout.AppendLine(e.Data); };
                 process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) { stderr.AppendLine(e.Data); };
 
                 if (!process.Start()) throw new InvalidOperationException("The Brightspace Sync backend did not start.");
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
+                if (standardInput != null)
+                {
+                    await process.StandardInput.WriteAsync(standardInput);
+                    process.StandardInput.Close();
+                }
                 await Task.Run(new Action(process.WaitForExit));
 
                 return new BackendProcessResult
@@ -200,10 +282,74 @@ namespace BrightspaceSync.ControlPanel
             return status;
         }
 
+        public async Task<DesktopSettings> GetSettingsAsync()
+        {
+            BackendProcessResult result = await RunAsync("settings", "--json");
+            if (result.ExitCode != 0)
+                throw new BackendCommandException("The Brightspace Sync backend could not load settings.", result.ExitCode);
+
+            DesktopSettings settings = DeserializeResponse<DesktopSettings>(result.StandardOutput, "settings");
+            ValidateSettings(settings);
+            return settings;
+        }
+
+        public async Task<SettingsSaveResponse> SaveSettingsAsync(SettingsSaveRequest request)
+        {
+            if (request == null) throw new ArgumentNullException("request");
+            string payload = _json.Serialize(request);
+            BackendProcessResult result = await RunProcessAsync("settings", payload, "save", "--json");
+            if (result.ExitCode != 0)
+                throw new BackendCommandException("The Brightspace Sync backend could not save settings.", result.ExitCode);
+
+            SettingsSaveResponse response = ParseSettingsSaveResponse(result.StandardOutput);
+            return response;
+        }
+
+        internal SettingsSaveResponse ParseSettingsSaveResponseForSelfTest(string standardOutput)
+        {
+            return ParseSettingsSaveResponse(standardOutput);
+        }
+
+        private SettingsSaveResponse ParseSettingsSaveResponse(string standardOutput)
+        {
+            SettingsSaveResponse response = DeserializeResponse<SettingsSaveResponse>(standardOutput, "settings save");
+            if (response == null || response.schemaVersion != SupportedStatusSchemaVersion)
+                throw new InvalidDataException("The Brightspace Sync backend settings-save schema is not supported.");
+            if (response.ok)
+            {
+                ValidateSettings(response.settings);
+            }
+            else if (response.errors == null || response.errors.Length == 0)
+            {
+                throw new InvalidDataException("The Brightspace Sync backend returned an incomplete settings validation response.");
+            }
+            return response;
+        }
+
         public Task<BackendProcessResult> RunSyncAsync(string mode)
         {
             if (mode != "quick" && mode != "full") throw new ArgumentOutOfRangeException("mode");
             return RunAsync(mode);
+        }
+
+        private T DeserializeResponse<T>(string standardOutput, string label)
+        {
+            try
+            {
+                return _json.Deserialize<T>(LastNonEmptyLine(standardOutput));
+            }
+            catch (Exception error)
+            {
+                throw new InvalidDataException("The Brightspace Sync backend returned an invalid " + label + " response.", error);
+            }
+        }
+
+        private static void ValidateSettings(DesktopSettings settings)
+        {
+            if (settings == null || settings.schemaVersion != SupportedStatusSchemaVersion)
+                throw new InvalidDataException("The Brightspace Sync backend settings schema is not supported.");
+            if (String.IsNullOrWhiteSpace(settings.mirrorDir) || settings.drive == null)
+                throw new InvalidDataException("The Brightspace Sync backend settings response is incomplete.");
         }
 
         internal static string LastNonEmptyLine(string value)

@@ -53,7 +53,7 @@ Legacy per-course `_sync_state.json` files remain in the local mirror for rollba
 
 ## Launcher contract
 
-`src/launcher.mjs` is the stable command dispatcher. It resolves entry points from its own installed application path, not the caller's working directory. Supported commands are `quick`, `full`, `publish`, `scheduled`, `setup-login`, `doctor`, and the machine-readable `status --json` desktop contract.
+`src/launcher.mjs` is the stable command dispatcher. It resolves entry points from its own installed application path, not the caller's working directory. Supported commands are `quick`, `full`, `publish`, `scheduled`, `setup-login`, `doctor`, and the machine-readable `status --json` and `settings` desktop contracts.
 
 The `.cmd`, PowerShell, and npm entry points all delegate through this launcher. Scheduled sync resolves the child sync entry through the same application-root abstraction. Runtime wrappers fail with a reinstall/setup message if packaged dependencies are missing; they never attempt to modify the installed application tree.
 
@@ -129,7 +129,31 @@ The open control panel refreshes backend status approximately every five seconds
 
 Failed GUI syncs append a bounded entry to the Node-resolved `logs\backend-failures.log`. Only the timestamp, operation, exit code, and sanitized standard-error tail are retained. URLs, credential-like fields, authorization/cookie values, and recognized key/token formats are redacted; standard output is never written to this log or shown in the main window.
 
-Open Mirror and View Logs use the paths from the status response. C# does not derive `%LOCALAPPDATA%` or the mirror location. Missing directories are reported without silently creating them. Settings and Refresh Login are explicit placeholders for later milestones.
+Open Mirror and View Logs use the paths from the status response. C# does not derive `%LOCALAPPDATA%` or the mirror location. Missing directories are reported without silently creating them. Refresh Login remains an explicit placeholder for the authentication milestone.
+
+## First-run setup and Settings (Milestone 2B.2)
+
+When `status --json` reports `configured: false`, the control panel automatically opens the shared **Set up Brightspace Sync** form. Cancelling leaves the per-user configuration unconfigured and keeps Quick Sync and Full Sync disabled. Saving does not trigger login or synchronization; it refreshes status and enables sync commands only after Node reports the application configured. The Settings button opens the same form with current values.
+
+The GUI obtains settings from:
+
+```text
+runtime\node.exe app\src\launcher.mjs settings --json
+```
+
+Schema version 1 exposes only `configured`, `baseUrl`, the effective `mirrorDir`, `mirrorOverrideActive`, and the optional Drive `enabled`/`destination` fields. It never exposes credentials, cookies, tokens, browser-session data, profile contents, or unrelated configuration. Saves use `settings save --json`; the versioned JSON request is written to standard input and never placed in command-line arguments, environment variables, or logs. Node performs HTTPS URL normalization and validation, validates absolute paths and protected-path separation, merges the supported fields into the existing schema, preserves unexposed settings, and atomically replaces `config.json` under the existing initialization lock.
+
+Fresh setup suggests `Brightspace Sync` under the actual Windows Documents known folder returned by `.NET`, so redirected OneDrive or policy-controlled Documents locations are respected. The user may edit or browse to any suitable absolute school-folder location. Private runtime data remains under the Node-resolved data directory and is never placed inside or moved with the mirror.
+
+Changing a non-empty existing mirror requires an explicit choice:
+
+- **Move existing mirror** asks Node to relocate the course files. Empty destinations are allowed; non-empty destinations are rejected instead of overwritten. Same-volume moves use a filesystem rename, while cross-volume moves stage a complete copy before promotion. The config switches only after the move succeeds, and handled failures roll the filesystem back and retain the old configured path.
+- **Use new location** updates `outputDir` and deliberately leaves the old mirror untouched.
+- **Cancel** makes no configuration change.
+
+If the old mirror is absent or effectively empty, an ordinary save is sufficient. A `BRIGHTSPACE_SYNC_MIRROR_DIR` environment override remains authoritative: Settings shows the effective path read-only, rejects a misleading different path, and does not rewrite the saved `outputDir`.
+
+Google Drive publishing remains off by default. Enabling **Publish mirror to Google Drive** requires a separate absolute filesystem destination, intended for a Google Drive for desktop folder. Disabling publishing permits an empty destination. This feature uses the existing `drivePublish.enabled` and `drivePublish.destination` keys; it does not add Google OAuth or publish private runtime data.
 
 For development, build the native executable with:
 
@@ -163,18 +187,14 @@ The items below are **non-blocking**. They are not required before moving to ins
 
 - Add more defensive browser-profile recovery that can restore or promote `.incomplete` when the replacement and subsequent legacy-source retry are unavailable.
 - Consider making the foreign or malformed initialization-lock stale period configurable, and add maintenance cleanup for stale orphan `.tmp-*` files.
-- During installer/setup UI work, resolve the actual Windows Documents known folder rather than deriving it from the user home; Documents may be redirected through OneDrive, enterprise policy, or another custom location.
 - Provide safe discovery and migration of an older source checkout during installation, including an option for the user to select the old installation when it cannot be found automatically.
-- Treat an `outputDir` change as an explicit relocation operation. Offer choices to use a new location or move the existing mirror, and preserve runtime-state and Drive-publishing behavior correctly.
 - Consider both per-user/no-admin and per-machine installation. Do not hard-code a `Program Files`-only installation unless that decision is made explicitly later.
-- Keep the mirror user-selectable and allow setup to choose a specific school-folder location instead of forcing the default Documents path. Google Drive publishing remains a separate, optional destination.
+- Consider crash-recovery journaling for the very small interruption windows during a same-volume rename or a staged cross-volume mirror relocation. Handled filesystem/configuration failures already roll back and retain the old configuration.
 
 ### Installer and release-phase work
 
 The following work remains intentionally deferred to later milestones:
 
-- first-run/setup UI
-- settings UI
 - Start Menu shortcuts
 - scheduling UI and Task Scheduler integration
 - repair behavior
@@ -186,5 +206,7 @@ The following work remains intentionally deferred to later milestones:
 - uninstall testing
 - code signing
 - optional automatic updates
+
+Milestone 2B.3 still covers Windows Credential Manager, institution authentication adapters, automatic Stony Brook login, Duo/MFA escalation, and Refresh Login. Milestone 2B.4 still covers Task Scheduler, recurring background sync, and scheduling UI. Installer, upgrade, repair, uninstall, signing, and release behavior remain part of Milestone 2C.
 
 No installer artifact should be published until the applicable install, upgrade, repair, and uninstall flows pass end-to-end testing.

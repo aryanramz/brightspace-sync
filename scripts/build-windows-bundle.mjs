@@ -16,6 +16,7 @@ export const BUNDLED_NODE_ARCHIVE_SHA256 = '6cac9ffbca8f6a47091e4b5c772e0606049c
 export const BUNDLED_NODE_ARCHIVE_URL = `https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${BUNDLED_NODE_ARCHIVE}`;
 
 const RUNTIME_SOURCE_FILES = [
+  'brightspace-url.mjs',
   'browser.mjs',
   'config.mjs',
   'courseFolders.mjs',
@@ -23,6 +24,7 @@ const RUNTIME_SOURCE_FILES = [
   'deadline-intelligence.mjs',
   'desktop-backend-cli.mjs',
   'desktop-backend.mjs',
+  'desktop-settings.mjs',
   'doctor.mjs',
   'index.mjs',
   'init-lock.mjs',
@@ -239,7 +241,7 @@ async function build() {
       desktopEntrypoint: 'Brightspace Sync.exe',
       desktop: {
         technology: '.NET Framework 4.8 WinForms',
-        backendContract: 'status --json',
+        backendContract: 'status/settings JSON over stdout; settings save JSON over stdin',
         backendSchemaVersion: 1
       },
       applicationRoot: 'app',
