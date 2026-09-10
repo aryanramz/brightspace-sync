@@ -13,8 +13,10 @@ const SOURCE_FILES = [
   'BackendDiagnosticSanitizer.cs',
   'BackendClient.cs',
   'ControlPanelSelfTest.cs',
+  'FolderPicker.cs',
   'MainForm.cs',
   'Program.cs',
+  'SetupSettingsForm.cs',
   path.join('Properties', 'AssemblyInfo.cs')
 ];
 

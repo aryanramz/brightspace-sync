@@ -37,8 +37,10 @@
     <Compile Include="BackendDiagnosticSanitizer.cs" />
     <Compile Include="BackendClient.cs" />
     <Compile Include="ControlPanelSelfTest.cs" />
+    <Compile Include="FolderPicker.cs" />
     <Compile Include="MainForm.cs" />
     <Compile Include="Program.cs" />
+    <Compile Include="SetupSettingsForm.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <None Include="App.config" />
     <None Include="app.manifest" />

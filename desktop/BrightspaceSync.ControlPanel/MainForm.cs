@@ -23,17 +23,23 @@ namespace BrightspaceSync.ControlPanel
         private readonly TextBox _activity = new TextBox();
         private readonly System.Windows.Forms.Timer _statusTimer = new System.Windows.Forms.Timer();
         private readonly SemaphoreSlim _statusRefreshGate = new SemaphoreSlim(1, 1);
+        private readonly ISettingsDialogService _settingsDialog;
         private IDesktopBackendClient _backend;
         private BackendStatus _backendStatus;
         private bool _operationRunning;
         private bool _operationStarting;
         private bool _closing;
+        private bool _firstRunSetupOffered;
 
-        internal MainForm() : this(null, StatusRefreshIntervalMilliseconds) { }
+        internal MainForm() : this(null, StatusRefreshIntervalMilliseconds, null) { }
 
         internal MainForm(IDesktopBackendClient backend, int statusRefreshIntervalMilliseconds)
+            : this(backend, statusRefreshIntervalMilliseconds, null) { }
+
+        internal MainForm(IDesktopBackendClient backend, int statusRefreshIntervalMilliseconds, ISettingsDialogService settingsDialog)
         {
             _backend = backend;
+            _settingsDialog = settingsDialog ?? new SettingsDialogService();
             Text = "Brightspace Sync";
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(520, 390);
@@ -77,7 +83,7 @@ namespace BrightspaceSync.ControlPanel
             _fullButton.Click += async delegate { await RunSyncAsync("full"); };
             _openMirrorButton.Click += delegate { OpenResolvedDirectory(true); };
             _viewLogsButton.Click += delegate { OpenResolvedDirectory(false); };
-            _settingsButton.Click += delegate { ShowDeferredFeature("Settings", "Settings will be available in the setup/settings milestone."); };
+            _settingsButton.Click += async delegate { await OpenSettingsAsync(false); };
             _refreshLoginButton.Click += delegate { ShowDeferredFeature("Refresh Login", "Login refresh will be available in the authentication milestone."); };
 
             var activityLabel = CreateCaption("Activity / Result:", 27, 282);
@@ -111,6 +117,7 @@ namespace BrightspaceSync.ControlPanel
         internal Task<bool> PollStatusForSelfTestAsync() { return RefreshStatusAsync(false, true, true); }
         internal Task RunSyncForSelfTestAsync(string mode) { return RunSyncAsync(mode); }
         internal bool OperationStartingForSelfTest { get { return _operationStarting; } }
+        internal bool FirstRunSetupOfferedForSelfTest { get { return _firstRunSetupOffered; } }
         internal BackendStatus BackendStatusForSelfTest { get { return _backendStatus; } }
         internal string StatusUiSnapshotForSelfTest
         {
@@ -141,7 +148,12 @@ namespace BrightspaceSync.ControlPanel
             try
             {
                 if (_backend == null) _backend = new BackendClient();
-                await RefreshStatusAsync(true, false, false);
+                bool refreshed = await RefreshStatusAsync(true, false, false);
+                if (refreshed && !_closing && !_backendStatus.configured && String.IsNullOrWhiteSpace(_backendStatus.activeOperation))
+                {
+                    _firstRunSetupOffered = true;
+                    await OpenSettingsAsync(true);
+                }
             }
             catch (Exception)
             {
@@ -188,7 +200,7 @@ namespace BrightspaceSync.ControlPanel
                         {
                             _activity.Text = _backendStatus.configured
                                 ? "Ready."
-                                : "Setup is not complete. Settings will be available in the next milestone.";
+                                : "Setup is not complete. Open Settings to configure Brightspace Sync.";
                         }
                     }
                 }
@@ -245,7 +257,7 @@ namespace BrightspaceSync.ControlPanel
             if (!_backendStatus.configured)
             {
                 _operationStarting = false;
-                _activity.Text = "Setup is not complete. Settings will be available in the next milestone.";
+                _activity.Text = "Setup is not complete. Open Settings to configure Brightspace Sync.";
                 UpdateSyncButtons();
                 return;
             }
@@ -287,6 +299,43 @@ namespace BrightspaceSync.ControlPanel
             {
                 _operationRunning = false;
                 UpdateSyncButtons();
+            }
+        }
+
+        private async Task OpenSettingsAsync(bool firstRun)
+        {
+            if (_closing || _operationRunning || _operationStarting || _backend == null) return;
+            _settingsButton.Enabled = false;
+            try
+            {
+                bool saved = await _settingsDialog.ShowAsync(this, _backend, firstRun);
+                if (_closing) return;
+                if (saved)
+                {
+                    bool refreshed = await RefreshStatusAsync(true, false, false);
+                    if (!_closing && refreshed && _backendStatus.configured)
+                    {
+                        _activity.Text = String.IsNullOrWhiteSpace(_backendStatus.activeOperation)
+                            ? "Settings saved. Ready."
+                            : "Settings saved. Another Brightspace operation is currently active.";
+                    }
+                }
+                else if (_backendStatus != null && !_backendStatus.configured)
+                {
+                    SetStatus("Setup Required", Color.DarkGoldenrod);
+                    _activity.Text = "Setup was cancelled. Open Settings when you are ready to continue.";
+                    UpdateSyncButtons();
+                }
+            }
+            catch (Exception)
+            {
+                if (_closing) return;
+                SetStatus("Error", Color.Firebrick);
+                _activity.Text = "Settings could not be opened. View Logs for diagnostic information.";
+            }
+            finally
+            {
+                if (!_closing) _settingsButton.Enabled = true;
             }
         }
 

@@ -20,14 +20,83 @@ namespace BrightspaceSync.ControlPanel
 
         private static async Task<int> RunAsync(string outputFile)
         {
+            string stage = "initialize";
             try
             {
+                stage = "resolve backend";
                 var backend = new BackendClient();
                 ProcessStartInfo startInfo = backend.CreateStartInfo("status", "--json");
                 ProcessStartInfo quickStartInfo = backend.CreateStartInfo("quick");
                 ProcessStartInfo fullStartInfo = backend.CreateStartInfo("full");
+                ProcessStartInfo settingsSaveStartInfo = backend.CreateSettingsSaveStartInfo();
+                stage = "load initial settings";
+                DesktopSettings initialSettings = await backend.GetSettingsAsync();
+                if (initialSettings.configured)
+                    throw new InvalidDataException("Packaged settings self-test requires an initially unconfigured data directory.");
+                var settingsRequest = new SettingsSaveRequest
+                {
+                    schemaVersion = 1,
+                    baseUrl = "https://example.test",
+                    mirrorDir = initialSettings.mirrorDir,
+                    drive = new DesktopDriveSettings { enabled = false, destination = String.Empty }
+                };
+                if (settingsSaveStartInfo.Arguments.Contains(settingsRequest.baseUrl) || settingsSaveStartInfo.Arguments.Contains(settingsRequest.mirrorDir))
+                    throw new InvalidDataException("Settings payload appeared in backend process arguments.");
+                stage = "save settings through private backend";
+                SettingsSaveResponse savedSettingsResponse = await backend.SaveSettingsAsync(settingsRequest);
+                if (!savedSettingsResponse.ok || !savedSettingsResponse.settings.configured)
+                    throw new InvalidDataException("Packaged settings could not be saved through the private Node backend.");
+                stage = "reload settings and status";
+                DesktopSettings currentSettings = await backend.GetSettingsAsync();
                 BackendStatus status = await backend.GetStatusAsync();
 
+                stage = "first-run and cancel behavior";
+                BackendStatus firstRunStatus = CloneStatus(status);
+                firstRunStatus.configured = false;
+                firstRunStatus.baseUrlConfigured = false;
+                var firstRunBackend = new ScriptedBackendClient(firstRunStatus, new BackendProcessResult { ExitCode = 0 });
+                var firstRunDialog = new ScriptedSettingsDialogService(false);
+                bool firstRunSetupTriggered;
+                bool firstRunCancelDisabledSync;
+                using (var firstRunForm = new MainForm(firstRunBackend, MainForm.StatusRefreshIntervalMilliseconds, firstRunDialog))
+                {
+                    SynchronizationContext.SetSynchronizationContext(null);
+                    await firstRunForm.InitializeForSelfTestAsync();
+                    firstRunSetupTriggered = firstRunForm.FirstRunSetupOfferedForSelfTest
+                        && firstRunDialog.ShowCalls == 1
+                        && firstRunDialog.LastFirstRun;
+                    firstRunCancelDisabledSync = !firstRunForm.SyncButtonsEnabledForSelfTest;
+                }
+
+                var cancelBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 });
+                using (var settingsForm = new SetupSettingsForm(cancelBackend, currentSettings, false, new NullFolderPicker()))
+                {
+                    settingsForm.CancelForSelfTest();
+                }
+                bool settingsCancelSavesNothing = cancelBackend.SaveCalls == 0;
+                var formSaveBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 });
+                bool sharedSettingsFormSavesThroughBackend;
+                using (var settingsForm = new SetupSettingsForm(formSaveBackend, currentSettings, false, new NullFolderPicker()))
+                    sharedSettingsFormSavesThroughBackend = await settingsForm.SaveForSelfTestAsync(null) && formSaveBackend.SaveCalls == 1;
+                bool environmentOverrideIsReadOnly;
+                using (var settingsForm = new SetupSettingsForm(cancelBackend, currentSettings, false, new NullFolderPicker()))
+                    environmentOverrideIsReadOnly = currentSettings.mirrorOverrideActive && !settingsForm.MirrorEditableForSelfTest;
+
+                DesktopSettings freshFormSettings = new DesktopSettings
+                {
+                    schemaVersion = 1,
+                    configured = false,
+                    baseUrl = String.Empty,
+                    mirrorDir = initialSettings.mirrorDir,
+                    mirrorOverrideActive = false,
+                    drive = new DesktopDriveSettings { enabled = false, destination = String.Empty }
+                };
+                string firstRunMirror;
+                using (var settingsForm = new SetupSettingsForm(cancelBackend, freshFormSettings, true, new NullFolderPicker()))
+                    firstRunMirror = settingsForm.RequestForSelfTest().mirrorDir;
+                bool firstRunUsesKnownDocuments = String.Equals(firstRunMirror, SetupSettingsForm.SuggestedFirstRunMirror(), StringComparison.OrdinalIgnoreCase);
+
+                stage = "status polling behavior";
                 bool initialButtonsEnabled;
                 bool externalLockStartedDisablesButtons;
                 bool externalLockFinishedReturnsReady;
@@ -66,8 +135,10 @@ namespace BrightspaceSync.ControlPanel
                     await firstPoll;
                 }
 
+                stage = "closing lifecycle";
                 await VerifyClosingLifecycleAsync(CloneStatus(status));
 
+                stage = "diagnostic sanitization";
                 string[] knownKeyValues = new[]
                 {
                     "AKIA" + new String('A', 16),
@@ -149,6 +220,7 @@ namespace BrightspaceSync.ControlPanel
                     AssertAbsent(failureLogText, forbidden, "failure log retained a recognized key pattern");
                 AssertAbsent(failureLogText, stdoutSentinel, "failure log wrote raw stdout");
 
+                stage = "sync preflight";
                 BackendStatus activeStatus = CloneStatus(status);
                 activeStatus.status = "running";
                 activeStatus.activeOperation = "Scheduled Sync";
@@ -174,6 +246,9 @@ namespace BrightspaceSync.ControlPanel
                     quickProcessArguments = quickStartInfo.Arguments,
                     fullProcessFileName = fullStartInfo.FileName,
                     fullProcessArguments = fullStartInfo.Arguments,
+                    settingsSaveProcessFileName = settingsSaveStartInfo.FileName,
+                    settingsSaveProcessArguments = settingsSaveStartInfo.Arguments,
+                    settingsSaveRedirectStandardInput = settingsSaveStartInfo.RedirectStandardInput,
                     useShellExecute = startInfo.UseShellExecute,
                     createNoWindow = startInfo.CreateNoWindow,
                     redirectStandardOutput = startInfo.RedirectStandardOutput,
@@ -182,6 +257,21 @@ namespace BrightspaceSync.ControlPanel
                     statusDataDir = status.dataDir,
                     statusMirrorDir = status.mirrorDir,
                     statusLogsDir = status.logsDir,
+                    settingsSchemaVersion = currentSettings.schemaVersion,
+                    settingsConfigured = currentSettings.configured,
+                    settingsBaseUrl = currentSettings.baseUrl,
+                    settingsMirrorDir = currentSettings.mirrorDir,
+                    settingsDriveEnabled = currentSettings.drive.enabled,
+                    settingsDriveDestination = currentSettings.drive.destination,
+                    settingsMirrorOverrideActive = currentSettings.mirrorOverrideActive,
+                    settingsPayloadAbsentFromArguments = !settingsSaveStartInfo.Arguments.Contains(settingsRequest.baseUrl)
+                        && !settingsSaveStartInfo.Arguments.Contains(settingsRequest.mirrorDir),
+                    firstRunSetupTriggered = firstRunSetupTriggered,
+                    firstRunCancelDisabledSync = firstRunCancelDisabledSync,
+                    firstRunUsesKnownDocuments = firstRunUsesKnownDocuments,
+                    settingsCancelSavesNothing = settingsCancelSavesNothing,
+                    sharedSettingsFormSavesThroughBackend = sharedSettingsFormSavesThroughBackend,
+                    environmentOverrideIsReadOnly = environmentOverrideIsReadOnly,
                     statusRefreshIntervalMilliseconds = MainForm.StatusRefreshIntervalMilliseconds,
                     initialButtonsEnabled = initialButtonsEnabled,
                     externalLockStartedDisablesButtons = externalLockStartedDisablesButtons,
@@ -202,7 +292,7 @@ namespace BrightspaceSync.ControlPanel
             {
                 try
                 {
-                    var failure = new { schemaVersion = 1, error = error.GetType().Name };
+                    var failure = new { schemaVersion = 1, error = error.GetType().Name, stage = stage };
                     File.WriteAllText(outputFile, new JavaScriptSerializer().Serialize(failure));
                 }
                 catch { }
@@ -327,6 +417,29 @@ namespace BrightspaceSync.ControlPanel
             SyncCalls++;
             return Task.FromResult(new BackendProcessResult { ExitCode = 0 });
         }
+
+        public Task<DesktopSettings> GetSettingsAsync()
+        {
+            return Task.FromResult(SettingsFromStatus(_status));
+        }
+
+        public Task<SettingsSaveResponse> SaveSettingsAsync(SettingsSaveRequest request)
+        {
+            throw new InvalidOperationException("Delayed status test does not save settings.");
+        }
+
+        private static DesktopSettings SettingsFromStatus(BackendStatus status)
+        {
+            return new DesktopSettings
+            {
+                schemaVersion = 1,
+                configured = status.configured,
+                baseUrl = status.configured ? "https://example.test" : String.Empty,
+                mirrorDir = status.mirrorDir,
+                mirrorOverrideActive = false,
+                drive = new DesktopDriveSettings { enabled = false, destination = String.Empty }
+            };
+        }
     }
 
     internal sealed class ScriptedBackendClient : IDesktopBackendClient
@@ -341,6 +454,7 @@ namespace BrightspaceSync.ControlPanel
         }
 
         internal int SyncCalls { get; private set; }
+        internal int SaveCalls { get; private set; }
 
         public Task<BackendStatus> GetStatusAsync()
         {
@@ -351,6 +465,66 @@ namespace BrightspaceSync.ControlPanel
         {
             SyncCalls++;
             return Task.FromResult(_result);
+        }
+
+        public Task<DesktopSettings> GetSettingsAsync()
+        {
+            return Task.FromResult(new DesktopSettings
+            {
+                schemaVersion = 1,
+                configured = _status.configured,
+                baseUrl = _status.configured ? "https://example.test" : String.Empty,
+                mirrorDir = _status.mirrorDir,
+                mirrorOverrideActive = false,
+                drive = new DesktopDriveSettings { enabled = false, destination = String.Empty }
+            });
+        }
+
+        public Task<SettingsSaveResponse> SaveSettingsAsync(SettingsSaveRequest request)
+        {
+            SaveCalls++;
+            return Task.FromResult(new SettingsSaveResponse
+            {
+                schemaVersion = 1,
+                ok = true,
+                settings = new DesktopSettings
+                {
+                    schemaVersion = 1,
+                    configured = true,
+                    baseUrl = request.baseUrl,
+                    mirrorDir = request.mirrorDir,
+                    mirrorOverrideActive = false,
+                    drive = request.drive
+                }
+            });
+        }
+    }
+
+    internal sealed class ScriptedSettingsDialogService : ISettingsDialogService
+    {
+        private readonly bool _result;
+
+        internal ScriptedSettingsDialogService(bool result)
+        {
+            _result = result;
+        }
+
+        internal int ShowCalls { get; private set; }
+        internal bool LastFirstRun { get; private set; }
+
+        public Task<bool> ShowAsync(IWin32Window owner, IDesktopBackendClient backend, bool firstRun)
+        {
+            ShowCalls++;
+            LastFirstRun = firstRun;
+            return Task.FromResult(_result);
+        }
+    }
+
+    internal sealed class NullFolderPicker : IFolderPicker
+    {
+        public string SelectFolder(IWin32Window owner, string description, string initialPath)
+        {
+            return null;
         }
     }
 }

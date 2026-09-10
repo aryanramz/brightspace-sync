@@ -23,6 +23,7 @@ const RUNTIME_SOURCE_FILES = [
   'deadline-intelligence.mjs',
   'desktop-backend-cli.mjs',
   'desktop-backend.mjs',
+  'desktop-settings.mjs',
   'doctor.mjs',
   'index.mjs',
   'init-lock.mjs',
@@ -239,7 +240,7 @@ async function build() {
       desktopEntrypoint: 'Brightspace Sync.exe',
       desktop: {
         technology: '.NET Framework 4.8 WinForms',
-        backendContract: 'status --json',
+        backendContract: 'status/settings JSON over stdout; settings save JSON over stdin',
         backendSchemaVersion: 1
       },
       applicationRoot: 'app',

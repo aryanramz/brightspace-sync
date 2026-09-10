@@ -206,7 +206,7 @@ async function migrateLegacyState(outputDir, paths, actions) {
   }
 }
 
-async function loadAppConfigUnderLock({ mode, paths }) {
+export async function loadAppConfigUnderLock({ mode, paths }) {
   const actions = [];
   let raw = await prepareUserConfig(paths, actions);
   raw = await migrateConfigToCurrent(raw, paths, actions);
@@ -282,6 +282,27 @@ export async function loadAppConfig({ mode = 'full', runtime = {}, initializatio
   if (!lock.acquired) throw initializationLockError(lock);
   try {
     return await loadAppConfigUnderLock({ mode, paths });
+  } finally {
+    await lock.release();
+  }
+}
+
+export async function withUserConfigTransaction({ mode = 'full', runtime = {}, initializationLock = {}, writeConfig = writeJsonAtomic, execute }) {
+  if (typeof execute !== 'function') throw new Error('A configuration transaction callback is required.');
+  const paths = resolveRuntimePaths(runtime);
+  const lock = await acquireInitializationLock(paths, initializationLock);
+  if (!lock.acquired) throw initializationLockError(lock);
+  try {
+    const loaded = await loadAppConfigUnderLock({ mode, paths });
+    const raw = await readConfigJson(paths.configFile, 'user configuration');
+    return await execute({
+      ...loaded,
+      raw,
+      async write(next) {
+        parsedConfigVersion(next, paths.configFile);
+        return writeConfig(paths.configFile, next);
+      }
+    });
   } finally {
     await lock.release();
   }

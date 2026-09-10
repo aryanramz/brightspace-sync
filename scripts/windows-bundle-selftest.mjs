@@ -220,11 +220,6 @@ try {
   assert.equal(doctor.stdout.includes(`Mirror: ${mirrorDir}`), true);
   assert.deepEqual(await snapshotTree(portableRoot), before, 'packaged doctor must not modify the application bundle');
 
-  const userConfigFile = path.join(dataDir, 'config.json');
-  const userConfig = JSON.parse(await fs.readFile(userConfigFile, 'utf8'));
-  userConfig.baseUrl = 'https://example.test';
-  await fs.writeFile(userConfigFile, `${JSON.stringify(userConfig, null, 2)}\n`, 'utf8');
-
   const controlPanelSelfTestFile = path.join(temp, 'control-panel-self-test.json');
   const controlPanelEnv = { ...isolatedEnv };
   delete controlPanelEnv.BRIGHTSPACE_SYNC_DEV_BUNDLE_ROOT;
@@ -233,7 +228,11 @@ try {
     env: controlPanelEnv,
     label: 'packaged Windows control-panel backend bridge'
   });
-  assert.equal(controlPanelSelfTest.code, 0, `${controlPanelSelfTest.stdout}\n${controlPanelSelfTest.stderr}`);
+  let controlPanelFailure = '';
+  if (controlPanelSelfTest.code !== 0) {
+    try { controlPanelFailure = await fs.readFile(controlPanelSelfTestFile, 'utf8'); } catch {}
+  }
+  assert.equal(controlPanelSelfTest.code, 0, `${controlPanelSelfTest.stdout}\n${controlPanelSelfTest.stderr}\n${controlPanelFailure}`);
   const controlPanelResult = JSON.parse(await fs.readFile(controlPanelSelfTestFile, 'utf8'));
   const packagedLauncherModule = path.join(appRoot, 'src', 'launcher.mjs');
   assert.equal(controlPanelResult.schemaVersion, 1);
@@ -243,11 +242,14 @@ try {
   assert.equal(await canonicalWindowsPath(controlPanelResult.processFileName), await canonicalWindowsPath(privateNode));
   assert.equal(await canonicalWindowsPath(controlPanelResult.quickProcessFileName), await canonicalWindowsPath(privateNode));
   assert.equal(await canonicalWindowsPath(controlPanelResult.fullProcessFileName), await canonicalWindowsPath(privateNode));
+  assert.equal(await canonicalWindowsPath(controlPanelResult.settingsSaveProcessFileName), await canonicalWindowsPath(privateNode));
   assert.equal(await canonicalWindowsPath(controlPanelResult.launcherScript), await canonicalWindowsPath(packagedLauncherModule));
   assert.equal(await canonicalWindowsPath(controlPanelResult.workingDirectory), await canonicalWindowsPath(appRoot));
   assert.equal(controlPanelResult.processArguments, `"${controlPanelResult.launcherScript}" status --json`);
   assert.equal(controlPanelResult.quickProcessArguments, `"${controlPanelResult.launcherScript}" quick`);
   assert.equal(controlPanelResult.fullProcessArguments, `"${controlPanelResult.launcherScript}" full`);
+  assert.equal(controlPanelResult.settingsSaveProcessArguments, `"${controlPanelResult.launcherScript}" settings save --json`);
+  assert.equal(controlPanelResult.settingsSaveRedirectStandardInput, true, 'settings save must send its payload through stdin');
   assert.equal(controlPanelResult.useShellExecute, false);
   assert.equal(controlPanelResult.createNoWindow, true);
   assert.equal(controlPanelResult.redirectStandardOutput, true);
@@ -256,6 +258,20 @@ try {
   assert.equal(await canonicalWindowsPath(controlPanelResult.statusDataDir), await canonicalWindowsPath(dataDir));
   assert.equal(await canonicalWindowsPath(controlPanelResult.statusMirrorDir), await canonicalWindowsPath(mirrorDir));
   assert.equal(await canonicalWindowsPath(controlPanelResult.statusLogsDir), await canonicalWindowsPath(path.join(dataDir, 'logs')));
+  assert.equal(controlPanelResult.settingsSchemaVersion, 1);
+  assert.equal(controlPanelResult.settingsConfigured, true);
+  assert.equal(controlPanelResult.settingsBaseUrl, 'https://example.test');
+  assert.equal(await canonicalWindowsPath(controlPanelResult.settingsMirrorDir), await canonicalWindowsPath(mirrorDir));
+  assert.equal(controlPanelResult.settingsDriveEnabled, false);
+  assert.equal(controlPanelResult.settingsDriveDestination, '');
+  assert.equal(controlPanelResult.settingsMirrorOverrideActive, true);
+  assert.equal(controlPanelResult.settingsPayloadAbsentFromArguments, true);
+  assert.equal(controlPanelResult.firstRunSetupTriggered, true, 'unconfigured startup must invoke the shared first-run settings flow');
+  assert.equal(controlPanelResult.firstRunCancelDisabledSync, true, 'cancelling first-run setup must leave sync disabled');
+  assert.equal(controlPanelResult.firstRunUsesKnownDocuments, true, 'fresh setup must use the Windows Documents known folder default');
+  assert.equal(controlPanelResult.settingsCancelSavesNothing, true, 'cancelling Settings must not call the save bridge');
+  assert.equal(controlPanelResult.sharedSettingsFormSavesThroughBackend, true, 'the shared setup/settings form must save only through the backend client');
+  assert.equal(controlPanelResult.environmentOverrideIsReadOnly, true, 'an environment-controlled mirror must not appear editable in Settings');
   assert.equal(controlPanelResult.statusRefreshIntervalMilliseconds, 5000);
   assert.equal(controlPanelResult.initialButtonsEnabled, true, 'configured control panel must initially enable sync buttons');
   assert.equal(controlPanelResult.externalLockStartedDisablesButtons, true, 'an external live lock must disable sync buttons on refresh');
@@ -275,8 +291,6 @@ try {
   assert.equal(failureLog.includes('[REDACTED'), true, 'failure log must retain a useful redacted diagnostic');
   assert.deepEqual(await snapshotTree(portableRoot), before, 'packaged control-panel bridge must not modify the application bundle');
   console.log('Packaged Windows control-panel bridge: PASS');
-  userConfig.baseUrl = '';
-  await fs.writeFile(userConfigFile, `${JSON.stringify(userConfig, null, 2)}\n`, 'utf8');
 
   const packagedBrowserModule = path.join(appRoot, 'src', 'browser.mjs');
   const packagedPlaywrightModule = path.join(appRoot, 'node_modules', 'playwright', 'index.mjs');
@@ -337,7 +351,8 @@ try {
 
   await requireFile(path.join(dataDir, 'config.json'), 'external per-user config');
   const config = JSON.parse(await fs.readFile(path.join(dataDir, 'config.json'), 'utf8'));
-  assert.equal(config.baseUrl, '');
+  assert.equal(config.baseUrl, 'https://example.test');
+  assert.equal(config.outputDir, '', 'environment mirror override must remain authoritative without rewriting outputDir');
   assert.equal(config.drivePublish?.enabled, false);
   for (const externalDir of ['BrowserProfile', 'state', 'logs']) {
     const stat = await fs.stat(path.join(dataDir, externalDir));

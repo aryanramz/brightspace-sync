@@ -48,6 +48,9 @@ jobs:
       - name: Desktop backend contract self-test
         run: npm run desktop-backend-selftest
 
+      - name: Desktop settings contract and mirror relocation self-test
+        run: npm run desktop-settings-selftest
+
       - name: School indexes self-test
         run: npm run school-indexes-selftest
 
@@ -125,6 +128,9 @@ jobs:
 
       - name: Runtime schema, atomic persistence, and initialization-lock self-test
         run: npm run runtime-foundation-selftest
+
+      - name: Desktop settings contract and mirror relocation self-test
+        run: npm run desktop-settings-selftest
 
       - name: Windows environment doctor
         run: npm run doctor
