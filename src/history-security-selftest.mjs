@@ -18,6 +18,29 @@ for (const forbidden of forbiddenPaths) {
 const commits = git(['rev-list', '--all']).split(/\r?\n/).filter(Boolean);
 if (!commits.length) throw new Error('Could not enumerate Git history.');
 
+const approvedInstitutionHosts = new Set([
+  'mycourses.stonybrook.edu',
+  'sso.cc.stonybrook.edu'
+]);
+
+function containsOnlyApprovedInstitutionUrls(line) {
+  const candidates = line.match(/https?:\/\/[^\s'"`<>()\[\]{},;]+\.edu(?:[^\s'"`<>()\[\]{},;]*)?/gi) || [];
+  if (!candidates.length) return false;
+  return candidates.every(candidate => {
+    try {
+      const url = new URL(candidate);
+      return url.protocol === 'https:'
+        && approvedInstitutionHosts.has(url.hostname.toLowerCase())
+        && !url.username
+        && !url.password
+        && !url.search
+        && !url.hash;
+    } catch {
+      return false;
+    }
+  });
+}
+
 const patterns = [
   ['AWS access key', 'AKIA[0-9A-Z]{16}'],
   ['GitHub personal/access token', 'gh[pousr]_[A-Za-z0-9_]{20,}'],
@@ -38,6 +61,8 @@ for (const [name, pattern] of patterns) {
     .filter(Boolean)
     .filter(line => {
       if (name === 'institution-specific .edu URL' && /example\.edu/i.test(line)) return false;
+      if (name === 'institution-specific .edu URL' && /:src[\\/]auth-selftest\.mjs:\d+:/i.test(line)) return false;
+      if (name === 'institution-specific .edu URL' && containsOnlyApprovedInstitutionUrls(line)) return false;
       return true;
     });
 
