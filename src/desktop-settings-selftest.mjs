@@ -41,12 +41,18 @@ async function makeRuntime(root, name, extraEnv = {}) {
   };
 }
 
-function request(baseUrl, mirrorDir, { driveEnabled = false, driveDestination = '', mirrorAction = '' } = {}) {
+function request(baseUrl, mirrorDir, {
+  driveEnabled = false,
+  driveDestination = '',
+  mirrorAction = '',
+  automaticLoginEnabled = false
+} = {}) {
   return {
     schemaVersion: 1,
     baseUrl,
     mirrorDir,
     drive: { enabled: driveEnabled, destination: driveDestination },
+    authentication: { automaticLoginEnabled },
     ...(mirrorAction ? { mirrorAction } : {})
   };
 }
@@ -155,15 +161,39 @@ try {
   const basicRuntime = await makeRuntime(temp, 'Basic');
   const basicPaths = resolveRuntimePaths(basicRuntime);
   const initial = await getDesktopSettings({ runtime: basicRuntime });
-  assert.deepEqual(Object.keys(initial).sort(), ['baseUrl', 'configured', 'drive', 'maySuggestFirstRunMirror', 'mirrorDir', 'mirrorOverrideActive', 'schemaVersion']);
+  assert.deepEqual(Object.keys(initial).sort(), ['authentication', 'baseUrl', 'configured', 'drive', 'maySuggestFirstRunMirror', 'mirrorDir', 'mirrorOverrideActive', 'schemaVersion']);
   assert.deepEqual(Object.keys(initial.drive).sort(), ['destination', 'enabled']);
+  assert.deepEqual(Object.keys(initial.authentication).sort(), ['automaticLoginEnabled', 'institution', 'supported']);
   assert.equal(initial.schemaVersion, 1);
   assert.equal(initial.configured, false);
   assert.equal(initial.baseUrl, '');
   assert.equal(initial.drive.enabled, false);
   assert.equal(initial.drive.destination, '');
+  assert.deepEqual(initial.authentication, { supported: false, institution: '', automaticLoginEnabled: false });
   assert.equal(initial.mirrorOverrideActive, false);
   assert.equal(initial.maySuggestFirstRunMirror, true, 'a genuinely fresh generated mirror may use the Windows known-folder suggestion');
+
+  const genericAutomatic = await saveDesktopSettings(request('https://example.test', initial.mirrorDir, {
+    automaticLoginEnabled: true
+  }), { runtime: basicRuntime });
+  assert.equal(errorCode(genericAutomatic, 'unsupported-institution'), true, 'generic institutions must not enable automatic credential sign-in');
+
+  const stonyBrookRuntime = await makeRuntime(temp, 'Stony Brook Authentication');
+  const stonyBrookInitial = await getDesktopSettings({ runtime: stonyBrookRuntime });
+  const stonyBrookSaved = await saveDesktopSettings(request('https://mycourses.stonybrook.edu', stonyBrookInitial.mirrorDir, {
+    automaticLoginEnabled: true
+  }), { runtime: stonyBrookRuntime });
+  assert.equal(stonyBrookSaved.ok, true);
+  assert.deepEqual(stonyBrookSaved.settings.authentication, {
+    supported: true,
+    institution: 'stony-brook',
+    automaticLoginEnabled: true
+  });
+  const stonyBrookRaw = await rawConfig(stonyBrookRuntime);
+  assert.equal(stonyBrookRaw.auth.automaticLoginEnabled, true);
+  assert.deepEqual(Object.keys(stonyBrookRaw.auth).filter(key => key.toLowerCase().includes('user') || key.toLowerCase().includes('pass')), []);
+  assert.equal(JSON.stringify(stonyBrookSaved).toLowerCase().includes('password'), false, 'settings response must never expose a password field');
+  assert.equal(JSON.stringify(stonyBrookSaved).toLowerCase().includes('username'), false, 'settings response must never expose a username field');
 
   const unsafeReadCases = [
     {

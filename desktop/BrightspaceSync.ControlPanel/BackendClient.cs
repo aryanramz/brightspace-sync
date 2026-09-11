@@ -72,6 +72,13 @@ namespace BrightspaceSync.ControlPanel
         public string destination { get; set; }
     }
 
+    internal sealed class DesktopAuthenticationSettings
+    {
+        public bool supported { get; set; }
+        public string institution { get; set; }
+        public bool automaticLoginEnabled { get; set; }
+    }
+
     internal sealed class DesktopSettings
     {
         public int schemaVersion { get; set; }
@@ -81,6 +88,7 @@ namespace BrightspaceSync.ControlPanel
         public bool mirrorOverrideActive { get; set; }
         public bool maySuggestFirstRunMirror { get; set; }
         public DesktopDriveSettings drive { get; set; }
+        public DesktopAuthenticationSettings authentication { get; set; }
     }
 
     internal sealed class SettingsSaveRequest
@@ -89,6 +97,7 @@ namespace BrightspaceSync.ControlPanel
         public string baseUrl { get; set; }
         public string mirrorDir { get; set; }
         public DesktopDriveSettings drive { get; set; }
+        public DesktopAuthenticationSettings authentication { get; set; }
         public string mirrorAction { get; set; }
     }
 
@@ -170,6 +179,7 @@ namespace BrightspaceSync.ControlPanel
         Task<DesktopSettings> GetSettingsAsync();
         Task<SettingsSaveResponse> SaveSettingsAsync(SettingsSaveRequest request);
         Task<BackendProcessResult> RunSyncAsync(string mode);
+        Task<BackendProcessResult> RunRefreshLoginAsync();
     }
 
     internal sealed class BackendClient : IDesktopBackendClient
@@ -332,6 +342,11 @@ namespace BrightspaceSync.ControlPanel
             return RunAsync(mode);
         }
 
+        public Task<BackendProcessResult> RunRefreshLoginAsync()
+        {
+            return RunAsync("refresh-login");
+        }
+
         private T DeserializeResponse<T>(string standardOutput, string label)
         {
             try
@@ -348,7 +363,7 @@ namespace BrightspaceSync.ControlPanel
         {
             if (settings == null || settings.schemaVersion != SupportedStatusSchemaVersion)
                 throw new InvalidDataException("The Brightspace Sync backend settings schema is not supported.");
-            if (String.IsNullOrWhiteSpace(settings.mirrorDir) || settings.drive == null)
+            if (String.IsNullOrWhiteSpace(settings.mirrorDir) || settings.drive == null || settings.authentication == null)
                 throw new InvalidDataException("The Brightspace Sync backend settings response is incomplete.");
         }
 

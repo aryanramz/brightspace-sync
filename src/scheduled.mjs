@@ -55,7 +55,7 @@ async function run() {
   const child = spawn(process.execPath, [applicationEntry('src/index.mjs', paths), `--mode=${decision.mode}`], {
     cwd: paths.appRoot,
     stdio: 'inherit',
-    windowsHide: false
+    windowsHide: true
   });
 
   const code = await new Promise((resolve, reject) => {

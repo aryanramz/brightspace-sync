@@ -56,6 +56,16 @@ async function snapshotTree(root) {
   return snapshot;
 }
 
+async function assertTreeOmitsText(root, forbiddenValues) {
+  for (const relative of await walkFiles(root)) {
+    let text;
+    try { text = await fs.readFile(path.join(root, relative), 'utf8'); } catch { continue; }
+    for (const forbidden of forbiddenValues) {
+      assert.equal(text.includes(forbidden), false, `${relative} retained a synthetic credential value.`);
+    }
+  }
+}
+
 async function assertNoDeveloperPathsOrSensitiveContent(bundleRoot, files) {
   const forbiddenExactPaths = [ROOT, process.env.USERPROFILE, process.cwd()]
     .filter(Boolean)
@@ -105,6 +115,8 @@ await requireFile(systemComSpec, 'Windows command processor');
 await requireFile(path.join(SOURCE_BUNDLE, 'Brightspace Sync.cmd'), 'built launcher');
 await requireFile(path.join(SOURCE_BUNDLE, 'Brightspace Sync.exe'), 'compiled Windows control panel');
 await requireFile(path.join(SOURCE_BUNDLE, 'Brightspace Sync.exe.config'), 'Windows control-panel runtime configuration');
+await requireFile(path.join(SOURCE_BUNDLE, 'Brightspace Sync Credential Helper.exe'), 'Windows credential helper');
+await requireFile(path.join(SOURCE_BUNDLE, 'Brightspace Sync Credential Helper.exe.config'), 'Windows credential-helper runtime configuration');
 await requireFile(path.join(SOURCE_BUNDLE, 'runtime', 'node.exe'), 'private Node.js runtime');
 await requireFile(path.join(SOURCE_BUNDLE, 'app', 'src', 'launcher.mjs'), 'packaged application launcher');
 await requireFile(path.join(SOURCE_BUNDLE, 'app', 'node_modules', 'playwright', 'package.json'), 'packaged Playwright dependency');
@@ -127,11 +139,13 @@ try {
 
   const privateNode = path.join(portableRoot, 'runtime', 'node.exe');
   const controlPanel = path.join(portableRoot, 'Brightspace Sync.exe');
+  const credentialHelper = path.join(portableRoot, 'Brightspace Sync Credential Helper.exe');
   const launcher = path.join(portableRoot, 'Brightspace Sync.cmd');
   const appRoot = path.join(portableRoot, 'app');
   const manifest = JSON.parse(await fs.readFile(path.join(portableRoot, 'bundle-manifest.json'), 'utf8'));
   assert.equal(manifest.entrypoint, 'Brightspace Sync.cmd', 'Milestone 2A command-line entrypoint must remain compatible');
   assert.equal(manifest.desktopEntrypoint, 'Brightspace Sync.exe');
+  assert.equal(manifest.credentialHelper, 'Brightspace Sync Credential Helper.exe');
   assert.equal(manifest.desktop?.technology, '.NET Framework 4.8 WinForms');
   assert.equal(manifest.desktop?.backendSchemaVersion, 1);
   const isolatedEnv = {
@@ -206,6 +220,43 @@ try {
   assert.equal(path.resolve(dependency.stdout.trim()).startsWith(path.join(appRoot, 'node_modules')), true);
 
   const before = await snapshotTree(portableRoot);
+  const credentialHelperSelfTestFile = path.join(temp, 'credential-helper-self-test.json');
+  const credentialHelperSelfTest = await run(credentialHelper, ['--self-test', credentialHelperSelfTestFile], {
+    cwd: unrelatedCwd,
+    env: isolatedEnv,
+    label: 'packaged Windows credential-helper smoke test'
+  });
+  assert.equal(credentialHelperSelfTest.code, 0, `${credentialHelperSelfTest.stdout}\n${credentialHelperSelfTest.stderr}`);
+  assert.deepEqual(JSON.parse(await fs.readFile(credentialHelperSelfTestFile, 'utf8')), {
+    schemaVersion: 1,
+    pipeTransport: true,
+    credentialTargetStable: true
+  });
+  assert.deepEqual(await snapshotTree(portableRoot), before, 'credential-helper smoke test must not modify the application bundle');
+  const credentialTransportProbe = [
+    "import { pathToFileURL } from 'node:url';",
+    'const client = await import(pathToFileURL(process.env.BRIGHTSPACE_SYNC_CREDENTIAL_CLIENT).href);',
+    'const adapter = await import(pathToFileURL(process.env.BRIGHTSPACE_SYNC_AUTH_ADAPTER).href);',
+    "const response = await client.requestCredentialHelper('probe', adapter.STONY_BROOK_CREDENTIAL_TARGET, { appRoot: process.env.BRIGHTSPACE_SYNC_PACKAGED_APP });",
+    'console.log(JSON.stringify(response));'
+  ].join(' ');
+  const credentialTransport = await run(privateNode, ['--input-type=module', '-e', credentialTransportProbe], {
+    cwd: unrelatedCwd,
+    env: {
+      ...isolatedEnv,
+      BRIGHTSPACE_SYNC_CREDENTIAL_CLIENT: path.join(appRoot, 'src', 'credential-helper-client.mjs'),
+      BRIGHTSPACE_SYNC_AUTH_ADAPTER: path.join(appRoot, 'src', 'auth-adapters.mjs'),
+      BRIGHTSPACE_SYNC_PACKAGED_APP: appRoot
+    },
+    label: 'packaged private-Node credential-helper named-pipe probe'
+  });
+  assert.equal(credentialTransport.code, 0, `${credentialTransport.stdout}\n${credentialTransport.stderr}`);
+  assert.deepEqual(JSON.parse(credentialTransport.stdout.trim()), {
+    schemaVersion: 1,
+    ok: true,
+    credentialApi: 'Windows Credential Manager'
+  });
+  assert.deepEqual(await snapshotTree(portableRoot), before, 'credential named-pipe probe must not modify the application bundle');
   const doctorWrapper = path.join(unrelatedCwd, 'invoke-packaged-doctor.cmd');
   await fs.writeFile(doctorWrapper, `@echo off\r\ncall "${launcher}" doctor\r\nexit /b %ERRORLEVEL%\r\n`, 'utf8');
   const doctor = await run(systemComSpec, ['/d', '/c', doctorWrapper], {
@@ -242,12 +293,14 @@ try {
   assert.equal(await canonicalWindowsPath(controlPanelResult.processFileName), await canonicalWindowsPath(privateNode));
   assert.equal(await canonicalWindowsPath(controlPanelResult.quickProcessFileName), await canonicalWindowsPath(privateNode));
   assert.equal(await canonicalWindowsPath(controlPanelResult.fullProcessFileName), await canonicalWindowsPath(privateNode));
+  assert.equal(await canonicalWindowsPath(controlPanelResult.refreshLoginProcessFileName), await canonicalWindowsPath(privateNode));
   assert.equal(await canonicalWindowsPath(controlPanelResult.settingsSaveProcessFileName), await canonicalWindowsPath(privateNode));
   assert.equal(await canonicalWindowsPath(controlPanelResult.launcherScript), await canonicalWindowsPath(packagedLauncherModule));
   assert.equal(await canonicalWindowsPath(controlPanelResult.workingDirectory), await canonicalWindowsPath(appRoot));
   assert.equal(controlPanelResult.processArguments, `"${controlPanelResult.launcherScript}" status --json`);
   assert.equal(controlPanelResult.quickProcessArguments, `"${controlPanelResult.launcherScript}" quick`);
   assert.equal(controlPanelResult.fullProcessArguments, `"${controlPanelResult.launcherScript}" full`);
+  assert.equal(controlPanelResult.refreshLoginProcessArguments, `"${controlPanelResult.launcherScript}" refresh-login`);
   assert.equal(controlPanelResult.settingsSaveProcessArguments, `"${controlPanelResult.launcherScript}" settings save --json`);
   assert.equal(controlPanelResult.settingsSaveRedirectStandardInput, true, 'settings save must send its payload through stdin');
   assert.equal(controlPanelResult.useShellExecute, false);
@@ -265,6 +318,8 @@ try {
   assert.equal(controlPanelResult.settingsDriveEnabled, false);
   assert.equal(controlPanelResult.settingsDriveDestination, '');
   assert.equal(controlPanelResult.settingsMirrorOverrideActive, true);
+  assert.equal(controlPanelResult.settingsAuthenticationSupported, false);
+  assert.equal(controlPanelResult.settingsAutomaticLoginEnabled, false);
   assert.equal(controlPanelResult.settingsPayloadAbsentFromArguments, true);
   assert.equal(controlPanelResult.firstRunSetupTriggered, true, 'unconfigured startup must invoke the shared first-run settings flow');
   assert.equal(controlPanelResult.firstRunCancelDisabledSync, true, 'cancelling first-run setup must leave sync disabled');
@@ -277,6 +332,19 @@ try {
   assert.equal(controlPanelResult.environmentOverrideIsReadOnly, true, 'an environment-controlled mirror must not appear editable in Settings');
   assert.equal(controlPanelResult.recoverySurvivesBackendBridge, true, 'mirror recovery details must survive JSON deserialization');
   assert.equal(controlPanelResult.recoveryPresentedToUi, true, 'mirror recovery details must be presented by the Settings UI');
+  assert.equal(controlPanelResult.existingPasswordNotRedisplayed, true);
+  assert.equal(controlPanelResult.blankPasswordKeepsCredential, true);
+  assert.equal(controlPanelResult.credentialPayloadExcludedFromBackend, true);
+  assert.equal(controlPanelResult.credentialReplacementWorks, true);
+  assert.equal(controlPanelResult.rejectedSettingsRestoreCredential, true);
+  assert.equal(controlPanelResult.backendThrowRestoresReplacedCredential, true);
+  assert.equal(controlPanelResult.backendThrowRestoresDeletedCredential, true);
+  assert.equal(controlPanelResult.backendThrowRemovesNewCredential, true);
+  assert.equal(controlPanelResult.backendThrowRollbackFailureWarnsSafely, true);
+  assert.equal(controlPanelResult.credentialDeletionWorks, true);
+  assert.equal(controlPanelResult.credentialFailureIsSafe, true);
+  assert.equal(controlPanelResult.passwordClearedAfterSave, true);
+  assert.equal(controlPanelResult.genericCredentialFieldsHidden, true);
   assert.equal(controlPanelResult.statusRefreshIntervalMilliseconds, 5000);
   assert.equal(controlPanelResult.initialButtonsEnabled, true, 'configured control panel must initially enable sync buttons');
   assert.equal(controlPanelResult.externalLockStartedDisablesButtons, true, 'an external live lock must disable sync buttons on refresh');
@@ -289,11 +357,14 @@ try {
   assert.equal(controlPanelResult.failedGuiOperationLogged, true, 'a failed GUI operation must produce a diagnostic log entry');
   assert.equal(controlPanelResult.failureLogOmitsRawStdout, true);
   assert.equal(controlPanelResult.preflightActiveOperationBlockedLaunch, true, 'sync preflight must not launch while another operation is active');
+  assert.equal(controlPanelResult.refreshLoginWired, true, 'Refresh Login must invoke the packaged private-Node backend command');
   const failureLog = await fs.readFile(path.join(dataDir, 'logs', 'backend-failures.log'), 'utf8');
   for (const forbidden of ['ExampleSecret123', 'fake-token-value', 'fake-value', 'ticket=fake-secret', 'RAW_STDOUT_MUST_NOT_BE_WRITTEN']) {
     assert.equal(failureLog.includes(forbidden), false, `sanitized failure log retained forbidden synthetic value: ${forbidden}`);
   }
   assert.equal(failureLog.includes('[REDACTED'), true, 'failure log must retain a useful redacted diagnostic');
+  await assertTreeOmitsText(dataDir, ['SyntheticStudent', 'SyntheticPasswordValue123', 'ReplacementPasswordValue456']);
+  await assertTreeOmitsText(mirrorDir, ['SyntheticStudent', 'SyntheticPasswordValue123', 'ReplacementPasswordValue456']);
   assert.deepEqual(await snapshotTree(portableRoot), before, 'packaged control-panel bridge must not modify the application bundle');
   console.log('Packaged Windows control-panel bridge: PASS');
 
@@ -382,6 +453,7 @@ try {
   assert.equal(packagedFiles.some(relative => /(?:^|[\\/])(?:BrowserProfile|\.brightspace-profile|BrightspaceMirror)(?:[\\/]|$)/i.test(relative)), false, 'bundle must not contain a browser profile or mirror');
   await assertNoDeveloperPathsOrSensitiveContent(portableRoot, packagedFiles);
   await assertBinaryOmitsPaths(controlPanel, [ROOT, process.env.USERPROFILE, process.cwd()]);
+  await assertBinaryOmitsPaths(credentialHelper, [ROOT, process.env.USERPROFILE, process.cwd()]);
 
   console.log('Windows portable bundle self-test: PASS');
 } finally {

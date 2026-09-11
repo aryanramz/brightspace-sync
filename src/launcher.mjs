@@ -9,13 +9,14 @@ const COMMANDS = {
   publish: { entry: 'src/publish-cli.mjs', args: [] },
   scheduled: { entry: 'src/scheduled.mjs', args: [] },
   'setup-login': { entry: 'src/login-setup.mjs', args: [] },
+  'refresh-login': { entry: 'src/refresh-login.mjs', args: [] },
   doctor: { entry: 'src/doctor.mjs', args: [] },
   status: { entry: 'src/desktop-backend-cli.mjs', args: ['status'] },
   settings: { entry: 'src/desktop-backend-cli.mjs', args: ['settings'] }
 };
 
 function usage() {
-  console.log('Usage: node src/launcher.mjs <quick|full|publish|scheduled|setup-login|doctor|status|settings> [arguments]');
+  console.log('Usage: node src/launcher.mjs <quick|full|publish|scheduled|setup-login|refresh-login|doctor|status|settings> [arguments]');
 }
 
 const [command = '', ...forwarded] = process.argv.slice(2);

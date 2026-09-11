@@ -1,3 +1,4 @@
+using BrightspaceSync.Security;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -28,6 +29,7 @@ namespace BrightspaceSync.ControlPanel
                 ProcessStartInfo startInfo = backend.CreateStartInfo("status", "--json");
                 ProcessStartInfo quickStartInfo = backend.CreateStartInfo("quick");
                 ProcessStartInfo fullStartInfo = backend.CreateStartInfo("full");
+                ProcessStartInfo refreshLoginStartInfo = backend.CreateStartInfo("refresh-login");
                 ProcessStartInfo settingsSaveStartInfo = backend.CreateSettingsSaveStartInfo();
                 stage = "load initial settings";
                 DesktopSettings initialSettings = await backend.GetSettingsAsync();
@@ -38,7 +40,8 @@ namespace BrightspaceSync.ControlPanel
                     schemaVersion = 1,
                     baseUrl = "https://example.test",
                     mirrorDir = initialSettings.mirrorDir,
-                    drive = new DesktopDriveSettings { enabled = false, destination = String.Empty }
+                    drive = new DesktopDriveSettings { enabled = false, destination = String.Empty },
+                    authentication = new DesktopAuthenticationSettings { automaticLoginEnabled = false }
                 };
                 if (settingsSaveStartInfo.Arguments.Contains(settingsRequest.baseUrl) || settingsSaveStartInfo.Arguments.Contains(settingsRequest.mirrorDir))
                     throw new InvalidDataException("Settings payload appeared in backend process arguments.");
@@ -144,6 +147,199 @@ namespace BrightspaceSync.ControlPanel
                         String.Equals(settingsForm.RequestForSelfTest().mirrorDir, overrideFirstRunSettings.mirrorDir, StringComparison.OrdinalIgnoreCase)
                         && !settingsForm.MirrorEditableForSelfTest;
                 }
+
+                stage = "credential settings behavior";
+                const string syntheticUsername = "SyntheticStudent";
+                const string syntheticPassword = "SyntheticPasswordValue123";
+                const string replacementPassword = "ReplacementPasswordValue456";
+                DesktopSettings stonyBrookSettings = new DesktopSettings
+                {
+                    schemaVersion = 1,
+                    configured = true,
+                    baseUrl = "https://mycourses.stonybrook.edu",
+                    mirrorDir = currentSettings.mirrorDir,
+                    mirrorOverrideActive = false,
+                    maySuggestFirstRunMirror = false,
+                    drive = new DesktopDriveSettings { enabled = false, destination = String.Empty },
+                    authentication = new DesktopAuthenticationSettings
+                    {
+                        supported = true,
+                        institution = "stony-brook",
+                        automaticLoginEnabled = true
+                    }
+                };
+                var keepStore = new FakeCredentialStore(syntheticUsername, syntheticPassword);
+                var keepBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 });
+                bool existingPasswordNotRedisplayed;
+                bool blankPasswordKeepsCredential;
+                bool credentialPayloadExcludedFromBackend;
+                using (var settingsForm = new SetupSettingsForm(keepBackend, stonyBrookSettings, false, new NullFolderPicker(), keepStore))
+                {
+                    existingPasswordNotRedisplayed = settingsForm.AuthenticationVisibleForSelfTest
+                        && settingsForm.CredentialExistsForSelfTest
+                        && settingsForm.PasswordForSelfTest.Length == 0;
+                    blankPasswordKeepsCredential = await settingsForm.SaveForSelfTestAsync(null)
+                        && keepStore.WriteCalls == 0
+                        && keepStore.DeleteCalls == 0;
+                    string backendPayload = new JavaScriptSerializer().Serialize(keepBackend.LastSettingsRequest);
+                    credentialPayloadExcludedFromBackend = backendPayload.IndexOf(syntheticUsername, StringComparison.OrdinalIgnoreCase) < 0
+                        && backendPayload.IndexOf(syntheticPassword, StringComparison.OrdinalIgnoreCase) < 0
+                        && backendPayload.IndexOf("username", StringComparison.OrdinalIgnoreCase) < 0
+                        && backendPayload.IndexOf("password", StringComparison.OrdinalIgnoreCase) < 0;
+                }
+
+                var replaceStore = new FakeCredentialStore(syntheticUsername, syntheticPassword);
+                var replaceBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 });
+                bool credentialReplacementWorks;
+                bool passwordClearedAfterSave;
+                using (var settingsForm = new SetupSettingsForm(replaceBackend, stonyBrookSettings, false, new NullFolderPicker(), replaceStore))
+                {
+                    settingsForm.SetAuthenticationForSelfTest(true, syntheticUsername, replacementPassword);
+                    credentialReplacementWorks = await settingsForm.SaveForSelfTestAsync(null)
+                        && replaceStore.WriteCalls == 1
+                        && replaceStore.CurrentPassword == replacementPassword;
+                    passwordClearedAfterSave = settingsForm.PasswordForSelfTest.Length == 0;
+                }
+
+                var rejectedResponse = new SettingsSaveResponse
+                {
+                    schemaVersion = 1,
+                    ok = false,
+                    errors = new[] { new SettingsValidationError { field = "baseUrl", code = "invalid-url", message = "Enter a valid HTTPS Brightspace URL." } }
+                };
+                var rollbackStore = new FakeCredentialStore(syntheticUsername, syntheticPassword);
+                var rejectedBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 }, rejectedResponse);
+                bool rejectedSettingsRestoreCredential;
+                using (var settingsForm = new SetupSettingsForm(rejectedBackend, stonyBrookSettings, false, new NullFolderPicker(), rollbackStore))
+                {
+                    settingsForm.SetAuthenticationForSelfTest(true, syntheticUsername, replacementPassword);
+                    rejectedSettingsRestoreCredential = !await settingsForm.SaveForSelfTestAsync(null)
+                        && rollbackStore.WriteCalls == 2
+                        && rollbackStore.CurrentPassword == syntheticPassword;
+                }
+
+                var replaceThrowStore = new FakeCredentialStore(syntheticUsername, syntheticPassword);
+                var replaceThrowBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 })
+                {
+                    SaveException = new BackendCommandException(replacementPassword, 17)
+                };
+                bool backendThrowRestoresReplacedCredential;
+                string replaceThrowMessage;
+                using (var settingsForm = new SetupSettingsForm(replaceThrowBackend, stonyBrookSettings, false, new NullFolderPicker(), replaceThrowStore))
+                {
+                    settingsForm.SetAuthenticationForSelfTest(true, syntheticUsername, replacementPassword);
+                    backendThrowRestoresReplacedCredential = !await settingsForm.SaveForSelfTestAsync(null)
+                        && replaceThrowStore.WriteCalls == 2
+                        && replaceThrowStore.CurrentPassword == syntheticPassword
+                        && settingsForm.PasswordForSelfTest.Length == 0;
+                    replaceThrowMessage = settingsForm.ValidationTextForSelfTest;
+                }
+
+                var deleteThrowStore = new FakeCredentialStore(syntheticUsername, syntheticPassword);
+                var deleteThrowBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 })
+                {
+                    SaveException = new InvalidDataException(replacementPassword)
+                };
+                bool backendThrowRestoresDeletedCredential;
+                string deleteThrowMessage;
+                using (var settingsForm = new SetupSettingsForm(deleteThrowBackend, stonyBrookSettings, false, new NullFolderPicker(), deleteThrowStore))
+                {
+                    settingsForm.RemoveCredentialForSelfTest();
+                    backendThrowRestoresDeletedCredential = !await settingsForm.SaveForSelfTestAsync(null)
+                        && deleteThrowStore.DeleteCalls == 1
+                        && deleteThrowStore.WriteCalls == 1
+                        && deleteThrowStore.CurrentPassword == syntheticPassword
+                        && settingsForm.PasswordForSelfTest.Length == 0;
+                    deleteThrowMessage = settingsForm.ValidationTextForSelfTest;
+                }
+
+                var createThrowStore = new FakeCredentialStore();
+                var createThrowBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 })
+                {
+                    SaveException = new InvalidOperationException(replacementPassword)
+                };
+                bool backendThrowRemovesNewCredential;
+                string createThrowMessage;
+                using (var settingsForm = new SetupSettingsForm(createThrowBackend, stonyBrookSettings, false, new NullFolderPicker(), createThrowStore))
+                {
+                    settingsForm.SetAuthenticationForSelfTest(true, syntheticUsername, replacementPassword);
+                    backendThrowRemovesNewCredential = !await settingsForm.SaveForSelfTestAsync(null)
+                        && createThrowStore.WriteCalls == 1
+                        && createThrowStore.DeleteCalls == 1
+                        && !createThrowStore.Exists
+                        && settingsForm.PasswordForSelfTest.Length == 0;
+                    createThrowMessage = settingsForm.ValidationTextForSelfTest;
+                }
+
+                var rollbackFailureStore = new FakeCredentialStore(syntheticUsername, syntheticPassword) { FailWriteOnCall = 2 };
+                var rollbackFailureBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 })
+                {
+                    SaveException = new InvalidOperationException(replacementPassword)
+                };
+                bool backendThrowRollbackFailureWarnsSafely;
+                string rollbackFailureMessage;
+                using (var settingsForm = new SetupSettingsForm(rollbackFailureBackend, stonyBrookSettings, false, new NullFolderPicker(), rollbackFailureStore))
+                {
+                    settingsForm.SetAuthenticationForSelfTest(true, syntheticUsername, replacementPassword);
+                    backendThrowRollbackFailureWarnsSafely = !await settingsForm.SaveForSelfTestAsync(null)
+                        && settingsForm.ValidationTextForSelfTest.IndexOf("manual review", StringComparison.OrdinalIgnoreCase) >= 0
+                        && settingsForm.PasswordForSelfTest.Length == 0;
+                    rollbackFailureMessage = settingsForm.ValidationTextForSelfTest;
+                }
+
+                string credentialExceptionMessages = String.Join("\n", new[] {
+                    replaceThrowMessage, deleteThrowMessage, createThrowMessage, rollbackFailureMessage
+                });
+                AssertAbsent(credentialExceptionMessages, syntheticPassword, "credential exception UI exposed the previous password");
+                AssertAbsent(credentialExceptionMessages, replacementPassword, "credential exception UI exposed the replacement password");
+                foreach (ScriptedBackendClient throwingBackend in new[] { replaceThrowBackend, deleteThrowBackend, createThrowBackend, rollbackFailureBackend })
+                {
+                    string payload = new JavaScriptSerializer().Serialize(throwingBackend.LastSettingsRequest);
+                    AssertAbsent(payload, syntheticPassword, "settings payload exposed the previous password");
+                    AssertAbsent(payload, replacementPassword, "settings payload exposed the replacement password");
+                }
+                if (!backendThrowRestoresReplacedCredential || !backendThrowRestoresDeletedCredential
+                    || !backendThrowRemovesNewCredential || !backendThrowRollbackFailureWarnsSafely)
+                    throw new InvalidDataException("Credential rollback did not safely cover every backend save exception case.");
+
+                var deleteStore = new FakeCredentialStore(syntheticUsername, syntheticPassword);
+                var deleteBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 });
+                bool credentialDeletionWorks;
+                using (var settingsForm = new SetupSettingsForm(deleteBackend, stonyBrookSettings, false, new NullFolderPicker(), deleteStore))
+                {
+                    settingsForm.RemoveCredentialForSelfTest();
+                    credentialDeletionWorks = await settingsForm.SaveForSelfTestAsync(null)
+                        && deleteStore.DeleteCalls == 1
+                        && !deleteStore.Exists
+                        && !deleteBackend.LastSettingsRequest.authentication.automaticLoginEnabled;
+                }
+
+                var failingStore = new FakeCredentialStore(syntheticUsername, syntheticPassword) { FailWrites = true };
+                var failingCredentialBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 });
+                bool credentialFailureIsSafe;
+                using (var settingsForm = new SetupSettingsForm(failingCredentialBackend, stonyBrookSettings, false, new NullFolderPicker(), failingStore))
+                {
+                    settingsForm.SetAuthenticationForSelfTest(true, syntheticUsername, replacementPassword);
+                    bool saved = await settingsForm.SaveForSelfTestAsync(null);
+                    string failureText = settingsForm.ValidationTextForSelfTest;
+                    credentialFailureIsSafe = !saved
+                        && failingCredentialBackend.SaveCalls == 0
+                        && failureText.IndexOf(replacementPassword, StringComparison.OrdinalIgnoreCase) < 0
+                        && settingsForm.PasswordForSelfTest.Length == 0;
+                }
+
+                DesktopSettings genericSettings = new DesktopSettings
+                {
+                    schemaVersion = 1,
+                    configured = true,
+                    baseUrl = "https://example.test",
+                    mirrorDir = currentSettings.mirrorDir,
+                    drive = new DesktopDriveSettings { enabled = false, destination = String.Empty },
+                    authentication = new DesktopAuthenticationSettings { supported = false, institution = String.Empty, automaticLoginEnabled = false }
+                };
+                bool genericCredentialFieldsHidden;
+                using (var settingsForm = new SetupSettingsForm(cancelBackend, genericSettings, false, new NullFolderPicker(), new FakeCredentialStore()))
+                    genericCredentialFieldsHidden = !settingsForm.AuthenticationVisibleForSelfTest;
 
                 string recoveryOld = Path.Combine(status.mirrorDir, "Recovery Old");
                 string recoveryNew = Path.Combine(status.mirrorDir, "Recovery New");
@@ -315,6 +511,14 @@ namespace BrightspaceSync.ControlPanel
                     await activeForm.RunSyncForSelfTestAsync("quick");
                 }
                 bool preflightActiveOperationBlockedLaunch = activeBackend.SyncCalls == 0;
+                var refreshBackend = new ScriptedBackendClient(CloneStatus(status), new BackendProcessResult { ExitCode = 0 });
+                using (var refreshForm = new MainForm(refreshBackend, MainForm.StatusRefreshIntervalMilliseconds))
+                {
+                    SynchronizationContext.SetSynchronizationContext(null);
+                    await refreshForm.InitializeForSelfTestAsync();
+                    await refreshForm.RunRefreshLoginForSelfTestAsync();
+                }
+                bool refreshLoginWired = refreshBackend.RefreshLoginCalls == 1;
                 var result = new
                 {
                     schemaVersion = 1,
@@ -329,6 +533,8 @@ namespace BrightspaceSync.ControlPanel
                     quickProcessArguments = quickStartInfo.Arguments,
                     fullProcessFileName = fullStartInfo.FileName,
                     fullProcessArguments = fullStartInfo.Arguments,
+                    refreshLoginProcessFileName = refreshLoginStartInfo.FileName,
+                    refreshLoginProcessArguments = refreshLoginStartInfo.Arguments,
                     settingsSaveProcessFileName = settingsSaveStartInfo.FileName,
                     settingsSaveProcessArguments = settingsSaveStartInfo.Arguments,
                     settingsSaveRedirectStandardInput = settingsSaveStartInfo.RedirectStandardInput,
@@ -346,6 +552,8 @@ namespace BrightspaceSync.ControlPanel
                     settingsMirrorDir = currentSettings.mirrorDir,
                     settingsDriveEnabled = currentSettings.drive.enabled,
                     settingsDriveDestination = currentSettings.drive.destination,
+                    settingsAuthenticationSupported = currentSettings.authentication.supported,
+                    settingsAutomaticLoginEnabled = currentSettings.authentication.automaticLoginEnabled,
                     settingsMirrorOverrideActive = currentSettings.mirrorOverrideActive,
                     settingsPayloadAbsentFromArguments = !settingsSaveStartInfo.Arguments.Contains(settingsRequest.baseUrl)
                         && !settingsSaveStartInfo.Arguments.Contains(settingsRequest.mirrorDir),
@@ -360,6 +568,19 @@ namespace BrightspaceSync.ControlPanel
                     environmentOverrideIsReadOnly = environmentOverrideIsReadOnly,
                     recoverySurvivesBackendBridge = recoverySurvivesBackendBridge,
                     recoveryPresentedToUi = recoveryPresentedToUi,
+                    existingPasswordNotRedisplayed = existingPasswordNotRedisplayed,
+                    blankPasswordKeepsCredential = blankPasswordKeepsCredential,
+                    credentialPayloadExcludedFromBackend = credentialPayloadExcludedFromBackend,
+                    credentialReplacementWorks = credentialReplacementWorks,
+                    rejectedSettingsRestoreCredential = rejectedSettingsRestoreCredential,
+                    backendThrowRestoresReplacedCredential = backendThrowRestoresReplacedCredential,
+                    backendThrowRestoresDeletedCredential = backendThrowRestoresDeletedCredential,
+                    backendThrowRemovesNewCredential = backendThrowRemovesNewCredential,
+                    backendThrowRollbackFailureWarnsSafely = backendThrowRollbackFailureWarnsSafely,
+                    credentialDeletionWorks = credentialDeletionWorks,
+                    credentialFailureIsSafe = credentialFailureIsSafe,
+                    passwordClearedAfterSave = passwordClearedAfterSave,
+                    genericCredentialFieldsHidden = genericCredentialFieldsHidden,
                     statusRefreshIntervalMilliseconds = MainForm.StatusRefreshIntervalMilliseconds,
                     initialButtonsEnabled = initialButtonsEnabled,
                     externalLockStartedDisablesButtons = externalLockStartedDisablesButtons,
@@ -371,7 +592,8 @@ namespace BrightspaceSync.ControlPanel
                     failureLogCreated = File.Exists(failureLog),
                     failedGuiOperationLogged = failureBackend.SyncCalls == 1,
                     failureLogOmitsRawStdout = !failureLogText.Contains(stdoutSentinel),
-                    preflightActiveOperationBlockedLaunch = preflightActiveOperationBlockedLaunch
+                    preflightActiveOperationBlockedLaunch = preflightActiveOperationBlockedLaunch,
+                    refreshLoginWired = refreshLoginWired
                 };
                 File.WriteAllText(outputFile, new JavaScriptSerializer().Serialize(result));
                 return 0;
@@ -473,6 +695,7 @@ namespace BrightspaceSync.ControlPanel
         internal Task Started { get { return _started.Task; } }
         internal int MaximumConcurrentCalls { get { return _maximumConcurrentCalls; } }
         internal int SyncCalls { get; private set; }
+        internal int RefreshLoginCalls { get; private set; }
 
         internal void AllowCompletion()
         {
@@ -506,6 +729,12 @@ namespace BrightspaceSync.ControlPanel
             return Task.FromResult(new BackendProcessResult { ExitCode = 0 });
         }
 
+        public Task<BackendProcessResult> RunRefreshLoginAsync()
+        {
+            RefreshLoginCalls++;
+            return Task.FromResult(new BackendProcessResult { ExitCode = 0 });
+        }
+
         public Task<DesktopSettings> GetSettingsAsync()
         {
             return Task.FromResult(SettingsFromStatus(_status));
@@ -525,7 +754,8 @@ namespace BrightspaceSync.ControlPanel
                 baseUrl = status.configured ? "https://example.test" : String.Empty,
                 mirrorDir = status.mirrorDir,
                 mirrorOverrideActive = false,
-                drive = new DesktopDriveSettings { enabled = false, destination = String.Empty }
+                drive = new DesktopDriveSettings { enabled = false, destination = String.Empty },
+                authentication = new DesktopAuthenticationSettings { supported = false, institution = String.Empty, automaticLoginEnabled = false }
             };
         }
     }
@@ -549,7 +779,10 @@ namespace BrightspaceSync.ControlPanel
         }
 
         internal int SyncCalls { get; private set; }
+        internal int RefreshLoginCalls { get; private set; }
         internal int SaveCalls { get; private set; }
+        internal SettingsSaveRequest LastSettingsRequest { get; private set; }
+        internal Exception SaveException { get; set; }
 
         public Task<BackendStatus> GetStatusAsync()
         {
@@ -562,6 +795,12 @@ namespace BrightspaceSync.ControlPanel
             return Task.FromResult(_result);
         }
 
+        public Task<BackendProcessResult> RunRefreshLoginAsync()
+        {
+            RefreshLoginCalls++;
+            return Task.FromResult(_result);
+        }
+
         public Task<DesktopSettings> GetSettingsAsync()
         {
             return Task.FromResult(new DesktopSettings
@@ -571,13 +810,21 @@ namespace BrightspaceSync.ControlPanel
                 baseUrl = _status.configured ? "https://example.test" : String.Empty,
                 mirrorDir = _status.mirrorDir,
                 mirrorOverrideActive = false,
-                drive = new DesktopDriveSettings { enabled = false, destination = String.Empty }
+                drive = new DesktopDriveSettings { enabled = false, destination = String.Empty },
+                authentication = new DesktopAuthenticationSettings { supported = false, institution = String.Empty, automaticLoginEnabled = false }
             });
         }
 
         public Task<SettingsSaveResponse> SaveSettingsAsync(SettingsSaveRequest request)
         {
             SaveCalls++;
+            LastSettingsRequest = request;
+            if (SaveException != null)
+            {
+                var failed = new TaskCompletionSource<SettingsSaveResponse>();
+                failed.SetException(SaveException);
+                return failed.Task;
+            }
             if (_settingsSaveResponse != null)
                 return Task.FromResult(_settingsSaveResponse);
             return Task.FromResult(new SettingsSaveResponse
@@ -591,9 +838,73 @@ namespace BrightspaceSync.ControlPanel
                     baseUrl = request.baseUrl,
                     mirrorDir = request.mirrorDir,
                     mirrorOverrideActive = false,
-                    drive = request.drive
+                    drive = request.drive,
+                    authentication = request.authentication
                 }
             });
+        }
+    }
+
+    internal sealed class FakeCredentialStore : ICredentialStore
+    {
+        private string _username;
+        private string _password;
+
+        internal FakeCredentialStore(string username = "", string password = "")
+        {
+            _username = username ?? String.Empty;
+            _password = password ?? String.Empty;
+        }
+
+        internal bool FailReads { get; set; }
+        internal bool FailWrites { get; set; }
+        internal bool FailDeletes { get; set; }
+        internal int FailWriteOnCall { get; set; }
+        internal int ReadCalls { get; private set; }
+        internal int WriteCalls { get; private set; }
+        internal int DeleteCalls { get; private set; }
+        internal bool Exists { get { return !String.IsNullOrWhiteSpace(_username) && !String.IsNullOrEmpty(_password); } }
+        internal string CurrentPassword { get { return _password; } }
+
+        public CredentialRecord Read(string target)
+        {
+            ValidateTarget(target);
+            ReadCalls++;
+            if (FailReads) throw new CredentialStoreException("Windows could not read the saved Brightspace credential.");
+            return Exists ? new CredentialRecord(_username, _password.ToCharArray()) : null;
+        }
+
+        public string ReadUsername(string target)
+        {
+            ValidateTarget(target);
+            ReadCalls++;
+            if (FailReads) throw new CredentialStoreException("Windows could not inspect the saved Brightspace credential.");
+            return Exists ? _username : null;
+        }
+
+        public void Write(string target, string username, string password)
+        {
+            ValidateTarget(target);
+            WriteCalls++;
+            if (FailWrites || (FailWriteOnCall > 0 && WriteCalls == FailWriteOnCall))
+                throw new CredentialStoreException("Windows could not save the Brightspace credential.");
+            _username = username ?? String.Empty;
+            _password = password ?? String.Empty;
+        }
+
+        public void Delete(string target)
+        {
+            ValidateTarget(target);
+            DeleteCalls++;
+            if (FailDeletes) throw new CredentialStoreException("Windows could not remove the saved Brightspace credential.");
+            _username = String.Empty;
+            _password = String.Empty;
+        }
+
+        private static void ValidateTarget(string target)
+        {
+            if (!String.Equals(target, WindowsCredentialStore.StonyBrookTarget, StringComparison.Ordinal))
+                throw new CredentialStoreException("The requested credential target is not supported.");
         }
     }
 

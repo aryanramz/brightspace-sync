@@ -6,6 +6,7 @@
   "headless": false,
   "auth": {
     "autoSubmitSavedBrowserCredentials": false,
+    "automaticLoginEnabled": false,
     "manualLoginTimeoutMs": 600000
   },
   "activeTerms": [],

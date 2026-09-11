@@ -19,13 +19,15 @@ import {
   crawlContent,
   discoverCourses,
   savePageSnapshot,
-  syncSection,
-  waitForAuthenticatedHome
+  syncSection
 } from './crawler.mjs';
 import { writeProjectViews } from './status.mjs';
 import { writeSchoolIndexes } from './school-indexes.mjs';
 import { publishMirrorToDrive, resolveDrivePublishConfig } from './publish.mjs';
 import { acquireSyncLock, describeActiveLock } from './sync-lock.mjs';
+import { authenticateWithInstitutionAdapter, makeChromiumPageVisible } from './auth-flow.mjs';
+import { buildSyncBrowserLaunchOptions } from './browser-launch-options.mjs';
+import { createWindowsCredentialProvider } from './credential-helper-client.mjs';
 
 const APP_VERSION = '2.4.1';
 
@@ -99,26 +101,28 @@ async function runSync(mode, config) {
   const browser = findChromiumExecutable(config.browserExecutablePath);
   console.log(`Browser:     ${browser.name} (${browser.path})`);
 
-  const context = await chromium.launchPersistentContext(config.profileDir, {
-    executablePath: browser.path,
-    headless: Boolean(config.headless),
-    acceptDownloads: true,
-    viewport: { width: 1440, height: 1000 },
-    args: ['--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble']
-  });
+  const context = await chromium.launchPersistentContext(
+    config.profileDir,
+    buildSyncBrowserLaunchOptions(config, browser.path)
+  );
 
   await new Promise(resolve => setTimeout(resolve, 700));
   const startupPages = context.pages();
   const page = startupPages[0] || await context.newPage();
   for (const extra of startupPages.slice(1)) await extra.close().catch(() => {});
-  await page.bringToFront().catch(() => {});
   page.setDefaultNavigationTimeout(config.navigationTimeoutMs);
 
   try {
     const homeSnapshot = config.homeSnapshotDir;
     const homeNetworkDir = path.join(homeSnapshot, '_network');
     const stopHomeCapture = attachNetworkCapture(page, homeNetworkDir, config.baseUrl, config.captureNetwork !== false);
-    await waitForAuthenticatedHome(page, config.baseUrl, config.navigationTimeoutMs, config.auth);
+    await authenticateWithInstitutionAdapter({
+      page,
+      context,
+      config,
+      credentialProvider: createWindowsCredentialProvider({ appRoot: config.appRoot }),
+      makeVisible: () => makeChromiumPageVisible(context, page)
+    });
 
     // Authentication and SSO/MFA must be allowed to complete normally. Once
     // Brightspace is authenticated, install the crawler's network write guard.

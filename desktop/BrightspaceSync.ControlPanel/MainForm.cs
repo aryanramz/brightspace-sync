@@ -84,7 +84,7 @@ namespace BrightspaceSync.ControlPanel
             _openMirrorButton.Click += delegate { OpenResolvedDirectory(true); };
             _viewLogsButton.Click += delegate { OpenResolvedDirectory(false); };
             _settingsButton.Click += async delegate { await OpenSettingsAsync(false); };
-            _refreshLoginButton.Click += delegate { ShowDeferredFeature("Refresh Login", "Login refresh will be available in the authentication milestone."); };
+            _refreshLoginButton.Click += async delegate { await RunRefreshLoginAsync(); };
 
             var activityLabel = CreateCaption("Activity / Result:", 27, 282);
             activityLabel.AutoSize = true;
@@ -116,6 +116,7 @@ namespace BrightspaceSync.ControlPanel
         internal Task InitializeForSelfTestAsync() { return InitializeBackendAsync(); }
         internal Task<bool> PollStatusForSelfTestAsync() { return RefreshStatusAsync(false, true, true); }
         internal Task RunSyncForSelfTestAsync(string mode) { return RunSyncAsync(mode); }
+        internal Task RunRefreshLoginForSelfTestAsync() { return RunRefreshLoginAsync(); }
         internal bool OperationStartingForSelfTest { get { return _operationStarting; } }
         internal bool FirstRunSetupOfferedForSelfTest { get { return _firstRunSetupOffered; } }
         internal BackendStatus BackendStatusForSelfTest { get { return _backendStatus; } }
@@ -302,6 +303,76 @@ namespace BrightspaceSync.ControlPanel
             }
         }
 
+        private async Task RunRefreshLoginAsync()
+        {
+            if (_closing || _operationRunning || _operationStarting || _backend == null) return;
+            _operationStarting = true;
+            SetSyncButtons(false);
+            bool refreshed = await RefreshStatusAsync(false, false, false);
+            if (_closing)
+            {
+                _operationStarting = false;
+                return;
+            }
+            if (!refreshed)
+            {
+                _operationStarting = false;
+                UpdateSyncButtons();
+                return;
+            }
+            if (!String.IsNullOrWhiteSpace(_backendStatus.activeOperation))
+            {
+                _operationStarting = false;
+                SetStatus("Running " + _backendStatus.activeOperation, Color.DarkGoldenrod);
+                _activity.Text = "Another Brightspace operation is currently active.";
+                UpdateSyncButtons();
+                return;
+            }
+            if (!_backendStatus.configured)
+            {
+                _operationStarting = false;
+                _activity.Text = "Setup is not complete. Open Settings before refreshing login.";
+                UpdateSyncButtons();
+                return;
+            }
+
+            _operationStarting = false;
+            _operationRunning = true;
+            SetSyncButtons(false);
+            SetStatus("Running Login Refresh", Color.DarkGoldenrod);
+            _activity.Text = "Complete sign-in and any MFA challenge in the browser window.";
+
+            try
+            {
+                BackendProcessResult result = await _backend.RunRefreshLoginAsync();
+                await RefreshStatusAsync(false, false, true);
+                if (result.ExitCode == 0)
+                {
+                    SetStatus("Completed", Color.DarkGreen);
+                    _activity.Text = "Login refresh completed successfully.";
+                }
+                else
+                {
+                    SetStatus("Error", Color.Firebrick);
+                    _activity.Text = "Login refresh failed. Open View Logs for diagnostic information.";
+                    AppendFailureDiagnostic("Refresh Login", result.ExitCode, result.StandardError);
+                }
+                AppendSafeActivityLog("Refresh Login", result.ExitCode);
+            }
+            catch (Exception)
+            {
+                SetStatus("Error", Color.Firebrick);
+                _activity.Text = "Login refresh could not be started. Open View Logs for diagnostic information.";
+                AppendFailureDiagnostic("Refresh Login", -1, String.Empty);
+                AppendSafeActivityLog("Refresh Login", -1);
+            }
+            finally
+            {
+                _operationRunning = false;
+                UpdateSyncButtons();
+            }
+        }
+
         private async Task OpenSettingsAsync(bool firstRun)
         {
             if (_closing || _operationRunning || _operationStarting || _backend == null) return;
@@ -398,6 +469,7 @@ namespace BrightspaceSync.ControlPanel
         {
             _quickButton.Enabled = enabled;
             _fullButton.Enabled = enabled;
+            _refreshLoginButton.Enabled = enabled;
         }
 
         private void SetStatus(string text, Color color)
@@ -413,11 +485,6 @@ namespace BrightspaceSync.ControlPanel
             return timestamp.ToLocalTime().ToString("g");
         }
 
-        private static void ShowDeferredFeature(string title, string message)
-        {
-            MessageBox.Show(message, title, MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }
-
         private void OnFormClosing(object sender, FormClosingEventArgs args)
         {
             if (!_operationRunning)
@@ -427,7 +494,7 @@ namespace BrightspaceSync.ControlPanel
                 return;
             }
             args.Cancel = true;
-            MessageBox.Show("A sync is still running. Keep Brightspace Sync open until it finishes.", "Brightspace Sync", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("A Brightspace operation is still running. Keep Brightspace Sync open until it finishes.", "Brightspace Sync", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private void OnFormClosed(object sender, FormClosedEventArgs args)
