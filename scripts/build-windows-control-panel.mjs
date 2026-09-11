@@ -17,6 +17,7 @@ const SOURCE_FILES = [
   'MainForm.cs',
   'Program.cs',
   'SetupSettingsForm.cs',
+  path.join('..', 'Shared', 'WindowsCredentialStore.cs'),
   path.join('Properties', 'AssemblyInfo.cs')
 ];
 

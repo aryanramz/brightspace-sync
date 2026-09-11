@@ -42,6 +42,7 @@ function safeOperationLabel(mode) {
     case 'publish': return 'Drive Publish';
     case 'scheduled': return 'Scheduled Sync';
     case 'settings': return 'Settings';
+    case 'refresh-login': return 'Refresh Login';
     default: return 'Brightspace operation';
   }
 }

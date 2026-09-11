@@ -6,6 +6,7 @@ import { withUserConfigTransaction } from './config.mjs';
 import { resolveRuntimePaths } from './runtime-paths.mjs';
 import { acquireSyncLock } from './sync-lock.mjs';
 import { normalizeBrightspaceBaseUrl } from './brightspace-url.mjs';
+import { institutionAdapterForBaseUrl } from './auth-adapters.mjs';
 
 export const DESKTOP_SETTINGS_SCHEMA_VERSION = 1;
 
@@ -151,6 +152,7 @@ async function maySuggestFirstRunMirror({ config, paths, raw }, io) {
 
 async function safeSettings({ config, paths, raw }, io = fs) {
   const baseUrl = normalizeBrightspaceBaseUrl(config.baseUrl);
+  const adapter = institutionAdapterForBaseUrl(baseUrl);
   return {
     schemaVersion: DESKTOP_SETTINGS_SCHEMA_VERSION,
     configured: Boolean(baseUrl),
@@ -158,6 +160,11 @@ async function safeSettings({ config, paths, raw }, io = fs) {
     mirrorDir: config.outputDir,
     mirrorOverrideActive: Boolean(paths.mirrorDirOverride),
     maySuggestFirstRunMirror: await maySuggestFirstRunMirror({ config, paths, raw }, io),
+    authentication: {
+      supported: Boolean(adapter),
+      institution: adapter?.id || '',
+      automaticLoginEnabled: Boolean(adapter && config.auth?.automaticLoginEnabled)
+    },
     drive: {
       enabled: Boolean(config.drivePublish.enabled),
       destination: config.drivePublish.destination || ''
@@ -347,6 +354,12 @@ async function validateRequest(request, loaded, io) {
     errors.push(validationError('mirrorAction', 'invalid-choice', 'Choose whether to move the existing mirror or use the new folder.'));
   }
 
+  const adapter = institutionAdapterForBaseUrl(baseUrl);
+  const automaticLoginEnabled = request?.authentication?.automaticLoginEnabled === true;
+  if (automaticLoginEnabled && !adapter) {
+    errors.push(validationError('authentication.automaticLoginEnabled', 'unsupported-institution', 'Automatic sign-in is not available for this Brightspace site.'));
+  }
+
   const [appRoot, dataDir, existingMirror] = await Promise.all([
     canonicalFilesystemPath(loaded.paths.appRoot, io),
     canonicalFilesystemPath(loaded.paths.dataDir, io),
@@ -388,6 +401,7 @@ async function validateRequest(request, loaded, io) {
     driveEnabled,
     driveDestination: driveDestination?.physicalPath || '',
     mirrorAction,
+    automaticLoginEnabled,
     appRoot: appRoot.physicalPath,
     dataDir: dataDir.physicalPath
   };
@@ -478,6 +492,10 @@ export async function saveDesktopSettings(request, { runtime = {}, fileSystem = 
             ...(loaded.raw.drivePublish || {}),
             enabled: normalized.driveEnabled,
             destination: normalized.driveDestination
+          },
+          auth: {
+            ...(loaded.raw.auth || {}),
+            automaticLoginEnabled: normalized.automaticLoginEnabled
           }
         };
 
@@ -508,6 +526,10 @@ export async function saveDesktopSettings(request, { runtime = {}, fileSystem = 
             ...loaded.config.drivePublish,
             enabled: normalized.driveEnabled,
             destination: normalized.driveDestination
+          },
+          auth: {
+            ...loaded.config.auth,
+            automaticLoginEnabled: normalized.automaticLoginEnabled
           }
         };
         return {

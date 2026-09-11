@@ -239,6 +239,7 @@ export async function loadAppConfigUnderLock({ mode, paths }) {
     dynamicWaitMs: mode === 'quick' ? Number(raw.quickDynamicWaitMs ?? 1200) : Number(raw.dynamicWaitMs ?? 2200),
     auth: {
       autoSubmitSavedBrowserCredentials: raw.auth?.autoSubmitSavedBrowserCredentials ?? true,
+      automaticLoginEnabled: raw.auth?.automaticLoginEnabled === true,
       manualLoginTimeoutMs: Number(raw.auth?.manualLoginTimeoutMs ?? 10 * 60 * 1000)
     },
     drivePublish: {

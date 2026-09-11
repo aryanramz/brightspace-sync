@@ -17,6 +17,8 @@ export const BUNDLED_NODE_ARCHIVE_URL = `https://nodejs.org/dist/v${BUNDLED_NODE
 
 const RUNTIME_SOURCE_FILES = [
   'brightspace-url.mjs',
+  'auth-adapters.mjs',
+  'auth-flow.mjs',
   'browser.mjs',
   'config.mjs',
   'courseFolders.mjs',
@@ -25,6 +27,7 @@ const RUNTIME_SOURCE_FILES = [
   'desktop-backend-cli.mjs',
   'desktop-backend.mjs',
   'desktop-settings.mjs',
+  'credential-helper-client.mjs',
   'doctor.mjs',
   'index.mjs',
   'init-lock.mjs',
@@ -34,6 +37,7 @@ const RUNTIME_SOURCE_FILES = [
   'process-lock.mjs',
   'publish-cli.mjs',
   'publish.mjs',
+  'refresh-login.mjs',
   'runtime-paths.mjs',
   'scheduled.mjs',
   'school-indexes.mjs',
@@ -165,20 +169,27 @@ async function build() {
   const sourceLicenseFile = path.join(ROOT, 'LICENSE');
   const launcherTemplate = path.join(ROOT, 'packaging', 'windows', 'Brightspace Sync.cmd');
   const controlPanelBuildScript = path.join(ROOT, 'scripts', 'build-windows-control-panel.mjs');
+  const credentialHelperBuildScript = path.join(ROOT, 'scripts', 'build-windows-credential-helper.mjs');
   const controlPanelExe = path.join(ROOT, 'desktop', 'BrightspaceSync.ControlPanel', 'bin', 'Release', 'Brightspace Sync.exe');
   const controlPanelConfig = `${controlPanelExe}.config`;
+  const credentialHelperExe = path.join(ROOT, 'desktop', 'BrightspaceSync.CredentialHelper', 'bin', 'Release', 'Brightspace Sync Credential Helper.exe');
+  const credentialHelperConfig = `${credentialHelperExe}.config`;
   for (const [file, label] of [
     [sourcePackageFile, 'package.json'],
     [sourceLockFile, 'package-lock.json'],
     [sourceConfigFile, 'config.example.json'],
     [sourceLicenseFile, 'application license'],
     [launcherTemplate, 'packaged launcher template'],
-    [controlPanelBuildScript, 'control-panel build script']
+    [controlPanelBuildScript, 'control-panel build script'],
+    [credentialHelperBuildScript, 'credential-helper build script']
   ]) await requireFile(file, label);
   await validateRuntimeImportClosure();
   await run(process.execPath, [controlPanelBuildScript], { label: 'Windows control-panel build' });
+  await run(process.execPath, [credentialHelperBuildScript], { label: 'Windows credential-helper build' });
   await requireFile(controlPanelExe, 'compiled Windows control panel');
   await requireFile(controlPanelConfig, 'Windows control-panel runtime configuration');
+  await requireFile(credentialHelperExe, 'compiled Windows credential helper');
+  await requireFile(credentialHelperConfig, 'Windows credential-helper runtime configuration');
 
   const sourcePackage = JSON.parse(await fs.readFile(sourcePackageFile, 'utf8'));
   const sourceLock = JSON.parse(await fs.readFile(sourceLockFile, 'utf8'));
@@ -219,6 +230,8 @@ async function build() {
     await fs.copyFile(launcherTemplate, path.join(stagedBundle, 'Brightspace Sync.cmd'));
     await fs.copyFile(controlPanelExe, path.join(stagedBundle, 'Brightspace Sync.exe'));
     await fs.copyFile(controlPanelConfig, path.join(stagedBundle, 'Brightspace Sync.exe.config'));
+    await fs.copyFile(credentialHelperExe, path.join(stagedBundle, 'Brightspace Sync Credential Helper.exe'));
+    await fs.copyFile(credentialHelperConfig, path.join(stagedBundle, 'Brightspace Sync Credential Helper.exe.config'));
 
     await installProductionDependencies(appDir, buildRoot, sourcePackage);
 
@@ -239,9 +252,10 @@ async function build() {
       },
       entrypoint: 'Brightspace Sync.cmd',
       desktopEntrypoint: 'Brightspace Sync.exe',
+      credentialHelper: 'Brightspace Sync Credential Helper.exe',
       desktop: {
         technology: '.NET Framework 4.8 WinForms',
-        backendContract: 'status/settings JSON over stdout; settings save JSON over stdin',
+        backendContract: 'status/settings JSON over stdout; settings save JSON over stdin; credentials via private named pipe',
         backendSchemaVersion: 1
       },
       applicationRoot: 'app',

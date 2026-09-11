@@ -53,7 +53,7 @@ Legacy per-course `_sync_state.json` files remain in the local mirror for rollba
 
 ## Launcher contract
 
-`src/launcher.mjs` is the stable command dispatcher. It resolves entry points from its own installed application path, not the caller's working directory. Supported commands are `quick`, `full`, `publish`, `scheduled`, `setup-login`, `doctor`, and the machine-readable `status --json` and `settings` desktop contracts.
+`src/launcher.mjs` is the stable command dispatcher. It resolves entry points from its own installed application path, not the caller's working directory. Supported commands are `quick`, `full`, `publish`, `scheduled`, `setup-login`, `refresh-login`, `doctor`, and the machine-readable `status --json` and `settings` desktop contracts.
 
 The `.cmd`, PowerShell, and npm entry points all delegate through this launcher. Scheduled sync resolves the child sync entry through the same application-root abstraction. Runtime wrappers fail with a reinstall/setup message if packaged dependencies are missing; they never attempt to modify the installed application tree.
 
@@ -75,6 +75,8 @@ The package layout is:
 dist\Brightspace Sync\
   Brightspace Sync.exe
   Brightspace Sync.exe.config
+  Brightspace Sync Credential Helper.exe
+  Brightspace Sync Credential Helper.exe.config
   Brightspace Sync.cmd
   bundle-manifest.json
   runtime\
@@ -129,7 +131,7 @@ The open control panel refreshes backend status approximately every five seconds
 
 Failed GUI syncs append a bounded entry to the Node-resolved `logs\backend-failures.log`. Only the timestamp, operation, exit code, and sanitized standard-error tail are retained. URLs, credential-like fields, authorization/cookie values, and recognized key/token formats are redacted; standard output is never written to this log or shown in the main window.
 
-Open Mirror and View Logs use the paths from the status response. C# does not derive `%LOCALAPPDATA%` or the mirror location. Missing directories are reported without silently creating them. Refresh Login remains an explicit placeholder for the authentication milestone.
+Open Mirror and View Logs use the paths from the status response. C# does not derive `%LOCALAPPDATA%` or the mirror location. Missing directories are reported without silently creating them.
 
 ## First-run setup and Settings (Milestone 2B.2)
 
@@ -141,7 +143,7 @@ The GUI obtains settings from:
 runtime\node.exe app\src\launcher.mjs settings --json
 ```
 
-Schema version 1 exposes only `configured`, `baseUrl`, the effective `mirrorDir`, `mirrorOverrideActive`, and the optional Drive `enabled`/`destination` fields. It never exposes credentials, cookies, tokens, browser-session data, profile contents, or unrelated configuration. Saves use `settings save --json`; the versioned JSON request is written to standard input and never placed in command-line arguments, environment variables, or logs. Node performs HTTPS URL normalization and validation, validates absolute paths and protected-path separation, merges the supported fields into the existing schema, preserves unexposed settings, and atomically replaces `config.json` under the existing initialization lock.
+Schema version 1 exposes only `configured`, `baseUrl`, the effective `mirrorDir`, `mirrorOverrideActive`, optional Drive `enabled`/`destination` fields, and non-secret authentication availability/enabled flags. It never exposes usernames, passwords, credentials, cookies, tokens, browser-session data, profile contents, or unrelated configuration. Saves use `settings save --json`; the versioned non-secret JSON request is written to standard input and never placed in command-line arguments, environment variables, or logs. Node performs HTTPS URL normalization and validation, validates absolute paths and protected-path separation, merges the supported fields into the existing schema, preserves unexposed settings, and atomically replaces `config.json` under the existing initialization lock.
 
 Fresh setup suggests `Brightspace Sync` under the actual Windows Documents known folder returned by `.NET`, so redirected OneDrive or policy-controlled Documents locations are respected. The user may edit or browse to any suitable absolute school-folder location. Private runtime data remains under the Node-resolved data directory and is never placed inside or moved with the mirror.
 
@@ -170,6 +172,20 @@ npm run windows-bundle-selftest
 ```
 
 The standalone build output can target an already-built bundle by setting `BRIGHTSPACE_SYNC_DEV_BUNDLE_ROOT` to the absolute `dist\Brightspace Sync` directory before launching it. Normal packaged launches leave this development override unset and locate the private Node runtime relative to the GUI executable.
+
+## Secure institutional authentication (Milestone 2B.3)
+
+Persistent Chromium-session login remains the generic default. Brightspace Sync never implements a generic password-field search or automatic form filler. Institution-specific automatic sign-in is opt-in and is available only through an explicit adapter; the initial adapter supports the exact Brightspace host `mycourses.stonybrook.edu` and retrieves credentials only after the browser reaches the exact HTTPS SSO origin `https://sso.cc.stonybrook.edu`. HTTP, lookalike, and unexpected hosts stop automatic filling without retrieving a credential.
+
+The Settings form shows **Automatically sign me in when my session expires**, Username, and Password only for the supported Stony Brook site. The password is stored as a Windows Generic Credential under the stable target `Brightspace Sync:institution:stony-brook`; it is never written to `config.json`, the mirror, Drive, state, logs, command arguments, environment variables, or desktop JSON responses. Existing passwords are never displayed. A blank password preserves the saved password only when the username is unchanged; entering a password replaces it. Disabling automatic sign-in or choosing **Remove saved sign-in** deletes the saved credential when Settings is saved. `config.json` stores only the non-secret `auth.automaticLoginEnabled` flag.
+
+The bundled `Brightspace Sync Credential Helper.exe` is a narrowly scoped .NET Framework helper around Windows Credential Manager. The packaged Node process launches it without a console and exchanges a bounded, versioned request through a randomly named local named pipe. Credentials are not placed in process arguments, standard streams, environment variables, or temporary files. Helper failures return a fixed non-secret diagnostic.
+
+Normal sync first tests the persistent profile. A valid session continues without opening Credential Manager. When Stony Brook automatic sign-in is enabled and the known SSO form is reached, Node requests the credential, fills only the adapter's exact selectors, submits once, and clears its short-lived credential object. The browser is headed and starts minimized for this flow so normal work remains unobtrusive while still allowing a Duo challenge to be brought visibly to the foreground. Duo and other human challenges are never bypassed; after approval, the same session continues.
+
+**Refresh Login** now runs `refresh-login` through the private packaged Node runtime. It acquires the existing operation lock, opens the same persistent browser profile visibly, navigates to the safe normalized Brightspace URL, waits for manual SSO/MFA completion, verifies the authenticated Brightspace state, closes cleanly, and refreshes control-panel status. The backend subprocess remains hidden; only the interactive browser is shown.
+
+This first adapter intentionally depends on the currently recognized Stony Brook SSO page structure. Unexpected authentication states fail closed and direct the user to Refresh Login. Future adapter changes must be reviewed against the live institutional flow without weakening exact-origin validation. Credential Manager protects credentials for the signed-in Windows account; it is not intended to defend against malicious code already running as that same user.
 
 ## Deferred / Later Improvements
 
@@ -207,6 +223,6 @@ The following work remains intentionally deferred to later milestones:
 - code signing
 - optional automatic updates
 
-Milestone 2B.3 still covers Windows Credential Manager, institution authentication adapters, automatic Stony Brook login, Duo/MFA escalation, and Refresh Login. Milestone 2B.4 still covers Task Scheduler, recurring background sync, and scheduling UI. Installer, upgrade, repair, uninstall, signing, and release behavior remain part of Milestone 2C.
+Milestone 2B.4 still covers Task Scheduler, recurring background sync, and scheduling UI. Additional institution adapters and changes required by future SSO page revisions remain later enhancements. Installer, upgrade, repair, uninstall, signing, and release behavior remain part of Milestone 2C.
 
 No installer artifact should be published until the applicable install, upgrade, repair, and uninstall flows pass end-to-end testing.
