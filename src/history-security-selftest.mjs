@@ -23,8 +23,20 @@ const approvedInstitutionHosts = new Set([
   'sso.cc.stonybrook.edu'
 ]);
 
+const stonyBrookEducationDomain = 'stonybrook.' + 'edu';
+const approvedSyntheticAuthFixtureUrls = new Set([
+  `http://mycourses.${stonyBrookEducationDomain}`,
+  `https://mycourses.${stonyBrookEducationDomain}.evil.test`,
+  `http://sso.cc.${stonyBrookEducationDomain}/login`,
+  `https://sso.cc.${stonyBrookEducationDomain}.evil.test/login`
+]);
+
+function institutionUrlCandidates(line) {
+  return line.match(/https?:\/\/[^\s'"`<>()\[\]{},;]+\.edu(?:[^\s'"`<>()\[\]{},;]*)?/gi) || [];
+}
+
 function containsOnlyApprovedInstitutionUrls(line) {
-  const candidates = line.match(/https?:\/\/[^\s'"`<>()\[\]{},;]+\.edu(?:[^\s'"`<>()\[\]{},;]*)?/gi) || [];
+  const candidates = institutionUrlCandidates(line);
   if (!candidates.length) return false;
   return candidates.every(candidate => {
     try {
@@ -39,6 +51,27 @@ function containsOnlyApprovedInstitutionUrls(line) {
       return false;
     }
   });
+}
+
+function containsOnlyKnownSyntheticAuthFixtures(line) {
+  if (!/^[0-9a-f]+:src[\\/]auth-selftest\.mjs:\d+:/i.test(line)) return false;
+  const candidates = institutionUrlCandidates(line);
+  return candidates.length > 0 && candidates.every(candidate => approvedSyntheticAuthFixtureUrls.has(candidate));
+}
+
+function isAllowedInstitutionUrlLine(line) {
+  return /example\.edu/i.test(line)
+    || containsOnlyKnownSyntheticAuthFixtures(line)
+    || containsOnlyApprovedInstitutionUrls(line);
+}
+
+const knownFixtureProbe = `0000000:src/auth-selftest.mjs:1:'http://mycourses.${stonyBrookEducationDomain}'`;
+if (!containsOnlyKnownSyntheticAuthFixtures(knownFixtureProbe)) {
+  throw new Error('History security self-test did not recognize the exact synthetic authentication fixture.');
+}
+const unrelatedCredentialProbe = "0000000:src/auth-selftest.mjs:999:'https://real-user:real-secret@" + "school.edu/login'";
+if (isAllowedInstitutionUrlLine(unrelatedCredentialProbe)) {
+  throw new Error('History security self-test allowed an unrelated credential-bearing authentication URL.');
 }
 
 const patterns = [
@@ -60,9 +93,7 @@ for (const [name, pattern] of patterns) {
     .split(/\r?\n/)
     .filter(Boolean)
     .filter(line => {
-      if (name === 'institution-specific .edu URL' && /example\.edu/i.test(line)) return false;
-      if (name === 'institution-specific .edu URL' && /:src[\\/]auth-selftest\.mjs:\d+:/i.test(line)) return false;
-      if (name === 'institution-specific .edu URL' && containsOnlyApprovedInstitutionUrls(line)) return false;
+      if (name === 'institution-specific .edu URL' && isAllowedInstitutionUrlLine(line)) return false;
       return true;
     });
 

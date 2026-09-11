@@ -19,6 +19,7 @@ const RUNTIME_SOURCE_FILES = [
   'brightspace-url.mjs',
   'auth-adapters.mjs',
   'auth-flow.mjs',
+  'browser-launch-options.mjs',
   'browser.mjs',
   'config.mjs',
   'courseFolders.mjs',

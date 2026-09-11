@@ -1,6 +1,11 @@
-import { AUTHENTICATED_BRIGHTSPACE_SELECTOR, institutionAdapterForBaseUrl } from './auth-adapters.mjs';
+import {
+  AUTHENTICATED_BRIGHTSPACE_SELECTOR,
+  institutionAdapterForBaseUrl,
+  isTrustedBrightspaceUrl
+} from './auth-adapters.mjs';
 
-async function isAuthenticated(page) {
+async function isAuthenticated(page, configuredBaseUrl) {
+  if (!isTrustedBrightspaceUrl(page.url(), configuredBaseUrl)) return false;
   try { return await page.locator(AUTHENTICATED_BRIGHTSPACE_SELECTOR).count() > 0; } catch { return false; }
 }
 
@@ -26,7 +31,7 @@ export async function authenticateWithInstitutionAdapter({
   allowAutomatic = true
 }) {
   await page.goto(config.baseUrl, { waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs }).catch(() => {});
-  if (await isAuthenticated(page)) {
+  if (await isAuthenticated(page, config.baseUrl)) {
     log.log('Existing Brightspace session found — continuing without credential access.');
     return { authenticated: true, credentialRetrieved: false, humanEscalation: false };
   }
@@ -36,6 +41,7 @@ export async function authenticateWithInstitutionAdapter({
   let credentialRetrieved = false;
   let humanEscalation = false;
   let submitted = false;
+  let handoffInitiated = false;
 
   if (!automatic) {
     await makeVisible();
@@ -45,7 +51,7 @@ export async function authenticateWithInstitutionAdapter({
 
   const started = Date.now();
   while (Date.now() - started < Number(timeoutMs)) {
-    if (await isAuthenticated(page)) {
+    if (await isAuthenticated(page, config.baseUrl)) {
       log.log('Brightspace authentication completed — continuing.');
       return { authenticated: true, credentialRetrieved, humanEscalation };
     }
@@ -58,7 +64,20 @@ export async function authenticateWithInstitutionAdapter({
       if (inspection.state === 'unexpected') {
         throw new Error('Automatic sign-in stopped at an unexpected authentication host. Use Refresh Login.');
       }
-      if (inspection.state === 'mfa') {
+      if (inspection.state === 'brightspace-wait') {
+        throw new Error('The Stony Brook institutional sign-in control was not recognized. Use Refresh Login.');
+      }
+      if (inspection.state === 'institution-login') {
+        if (handoffInitiated) {
+          throw new Error('The Stony Brook institutional sign-in handoff did not complete. Use Refresh Login.');
+        }
+        try {
+          await adapter.beginSsoHandoff(page);
+        } catch {
+          throw new Error('The Stony Brook institutional sign-in handoff could not be completed. Use Refresh Login.');
+        }
+        handoffInitiated = true;
+      } else if (inspection.state === 'mfa') {
         if (!humanEscalation) {
           await makeVisible();
           humanEscalation = true;

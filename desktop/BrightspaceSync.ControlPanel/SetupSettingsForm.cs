@@ -477,7 +477,7 @@ namespace BrightspaceSync.ControlPanel
             }
             catch (CredentialStoreException)
             {
-                _validation.Text = "Settings were not saved, and Windows could not restore the previous saved sign-in. Review the sign-in fields before retrying.";
+                _validation.Text = "Settings were not saved, and Windows could not restore the previous saved sign-in. The saved sign-in may require manual review before retrying.";
                 return false;
             }
         }
@@ -508,13 +508,16 @@ namespace BrightspaceSync.ControlPanel
             _validation.Text = "Saving...";
             CredentialRecord previousCredential = null;
             bool credentialChanged = false;
+            bool backendSaveSucceeded = false;
             SettingsSaveRequest request = BuildRequest(mirrorAction);
             try
             {
                 if (!TryApplyCredentialChange(request, out previousCredential, out credentialChanged)) return false;
                 SettingsSaveResponse response = await _backend.SaveSettingsAsync(request);
+                if (response == null) throw new InvalidDataException("The settings backend returned no response.");
                 if (response.ok)
                 {
+                    backendSaveSucceeded = true;
                     CommitCredentialState(request);
                     _validation.Text = String.Empty;
                     if (interactive)
@@ -527,6 +530,7 @@ namespace BrightspaceSync.ControlPanel
                 }
 
                 if (!TryRollbackCredentialChange(previousCredential, credentialChanged)) return false;
+                credentialChanged = false;
 
                 if (interactive && response.relocation != null && response.relocation.required)
                 {
@@ -568,13 +572,15 @@ namespace BrightspaceSync.ControlPanel
                 _validation.Text = error == null ? "Settings could not be saved." : error.message;
                 return false;
             }
-            catch (CredentialStoreException error)
+            catch (CredentialStoreException)
             {
-                _validation.Text = error.Message;
+                if (!backendSaveSucceeded && !TryRollbackCredentialChange(previousCredential, credentialChanged)) return false;
+                _validation.Text = "Windows could not update the saved sign-in. No settings were saved.";
                 return false;
             }
             catch (Exception)
             {
+                if (!backendSaveSucceeded && !TryRollbackCredentialChange(previousCredential, credentialChanged)) return false;
                 _validation.Text = "Settings could not be saved. Try again, or open View Logs for diagnostics.";
                 return false;
             }

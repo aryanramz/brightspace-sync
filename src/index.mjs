@@ -25,8 +25,8 @@ import { writeProjectViews } from './status.mjs';
 import { writeSchoolIndexes } from './school-indexes.mjs';
 import { publishMirrorToDrive, resolveDrivePublishConfig } from './publish.mjs';
 import { acquireSyncLock, describeActiveLock } from './sync-lock.mjs';
-import { institutionAdapterForBaseUrl } from './auth-adapters.mjs';
 import { authenticateWithInstitutionAdapter, makeChromiumPageVisible } from './auth-flow.mjs';
+import { buildSyncBrowserLaunchOptions } from './browser-launch-options.mjs';
 import { createWindowsCredentialProvider } from './credential-helper-client.mjs';
 
 const APP_VERSION = '2.4.1';
@@ -101,19 +101,10 @@ async function runSync(mode, config) {
   const browser = findChromiumExecutable(config.browserExecutablePath);
   console.log(`Browser:     ${browser.name} (${browser.path})`);
 
-  const automaticInstitutionLogin = Boolean(
-    config.auth?.automaticLoginEnabled && institutionAdapterForBaseUrl(config.baseUrl)
+  const context = await chromium.launchPersistentContext(
+    config.profileDir,
+    buildSyncBrowserLaunchOptions(config, browser.path)
   );
-  const context = await chromium.launchPersistentContext(config.profileDir, {
-    executablePath: browser.path,
-    headless: automaticInstitutionLogin ? false : Boolean(config.headless),
-    acceptDownloads: true,
-    viewport: { width: 1440, height: 1000 },
-    args: [
-      '--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble',
-      ...(automaticInstitutionLogin ? ['--start-minimized'] : [])
-    ]
-  });
 
   await new Promise(resolve => setTimeout(resolve, 700));
   const startupPages = context.pages();

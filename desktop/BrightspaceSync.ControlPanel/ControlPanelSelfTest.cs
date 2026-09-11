@@ -218,6 +218,90 @@ namespace BrightspaceSync.ControlPanel
                         && rollbackStore.CurrentPassword == syntheticPassword;
                 }
 
+                var replaceThrowStore = new FakeCredentialStore(syntheticUsername, syntheticPassword);
+                var replaceThrowBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 })
+                {
+                    SaveException = new BackendCommandException(replacementPassword, 17)
+                };
+                bool backendThrowRestoresReplacedCredential;
+                string replaceThrowMessage;
+                using (var settingsForm = new SetupSettingsForm(replaceThrowBackend, stonyBrookSettings, false, new NullFolderPicker(), replaceThrowStore))
+                {
+                    settingsForm.SetAuthenticationForSelfTest(true, syntheticUsername, replacementPassword);
+                    backendThrowRestoresReplacedCredential = !await settingsForm.SaveForSelfTestAsync(null)
+                        && replaceThrowStore.WriteCalls == 2
+                        && replaceThrowStore.CurrentPassword == syntheticPassword
+                        && settingsForm.PasswordForSelfTest.Length == 0;
+                    replaceThrowMessage = settingsForm.ValidationTextForSelfTest;
+                }
+
+                var deleteThrowStore = new FakeCredentialStore(syntheticUsername, syntheticPassword);
+                var deleteThrowBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 })
+                {
+                    SaveException = new InvalidDataException(replacementPassword)
+                };
+                bool backendThrowRestoresDeletedCredential;
+                string deleteThrowMessage;
+                using (var settingsForm = new SetupSettingsForm(deleteThrowBackend, stonyBrookSettings, false, new NullFolderPicker(), deleteThrowStore))
+                {
+                    settingsForm.RemoveCredentialForSelfTest();
+                    backendThrowRestoresDeletedCredential = !await settingsForm.SaveForSelfTestAsync(null)
+                        && deleteThrowStore.DeleteCalls == 1
+                        && deleteThrowStore.WriteCalls == 1
+                        && deleteThrowStore.CurrentPassword == syntheticPassword
+                        && settingsForm.PasswordForSelfTest.Length == 0;
+                    deleteThrowMessage = settingsForm.ValidationTextForSelfTest;
+                }
+
+                var createThrowStore = new FakeCredentialStore();
+                var createThrowBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 })
+                {
+                    SaveException = new InvalidOperationException(replacementPassword)
+                };
+                bool backendThrowRemovesNewCredential;
+                string createThrowMessage;
+                using (var settingsForm = new SetupSettingsForm(createThrowBackend, stonyBrookSettings, false, new NullFolderPicker(), createThrowStore))
+                {
+                    settingsForm.SetAuthenticationForSelfTest(true, syntheticUsername, replacementPassword);
+                    backendThrowRemovesNewCredential = !await settingsForm.SaveForSelfTestAsync(null)
+                        && createThrowStore.WriteCalls == 1
+                        && createThrowStore.DeleteCalls == 1
+                        && !createThrowStore.Exists
+                        && settingsForm.PasswordForSelfTest.Length == 0;
+                    createThrowMessage = settingsForm.ValidationTextForSelfTest;
+                }
+
+                var rollbackFailureStore = new FakeCredentialStore(syntheticUsername, syntheticPassword) { FailWriteOnCall = 2 };
+                var rollbackFailureBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 })
+                {
+                    SaveException = new InvalidOperationException(replacementPassword)
+                };
+                bool backendThrowRollbackFailureWarnsSafely;
+                string rollbackFailureMessage;
+                using (var settingsForm = new SetupSettingsForm(rollbackFailureBackend, stonyBrookSettings, false, new NullFolderPicker(), rollbackFailureStore))
+                {
+                    settingsForm.SetAuthenticationForSelfTest(true, syntheticUsername, replacementPassword);
+                    backendThrowRollbackFailureWarnsSafely = !await settingsForm.SaveForSelfTestAsync(null)
+                        && settingsForm.ValidationTextForSelfTest.IndexOf("manual review", StringComparison.OrdinalIgnoreCase) >= 0
+                        && settingsForm.PasswordForSelfTest.Length == 0;
+                    rollbackFailureMessage = settingsForm.ValidationTextForSelfTest;
+                }
+
+                string credentialExceptionMessages = String.Join("\n", new[] {
+                    replaceThrowMessage, deleteThrowMessage, createThrowMessage, rollbackFailureMessage
+                });
+                AssertAbsent(credentialExceptionMessages, syntheticPassword, "credential exception UI exposed the previous password");
+                AssertAbsent(credentialExceptionMessages, replacementPassword, "credential exception UI exposed the replacement password");
+                foreach (ScriptedBackendClient throwingBackend in new[] { replaceThrowBackend, deleteThrowBackend, createThrowBackend, rollbackFailureBackend })
+                {
+                    string payload = new JavaScriptSerializer().Serialize(throwingBackend.LastSettingsRequest);
+                    AssertAbsent(payload, syntheticPassword, "settings payload exposed the previous password");
+                    AssertAbsent(payload, replacementPassword, "settings payload exposed the replacement password");
+                }
+                if (!backendThrowRestoresReplacedCredential || !backendThrowRestoresDeletedCredential
+                    || !backendThrowRemovesNewCredential || !backendThrowRollbackFailureWarnsSafely)
+                    throw new InvalidDataException("Credential rollback did not safely cover every backend save exception case.");
+
                 var deleteStore = new FakeCredentialStore(syntheticUsername, syntheticPassword);
                 var deleteBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 });
                 bool credentialDeletionWorks;
@@ -489,6 +573,10 @@ namespace BrightspaceSync.ControlPanel
                     credentialPayloadExcludedFromBackend = credentialPayloadExcludedFromBackend,
                     credentialReplacementWorks = credentialReplacementWorks,
                     rejectedSettingsRestoreCredential = rejectedSettingsRestoreCredential,
+                    backendThrowRestoresReplacedCredential = backendThrowRestoresReplacedCredential,
+                    backendThrowRestoresDeletedCredential = backendThrowRestoresDeletedCredential,
+                    backendThrowRemovesNewCredential = backendThrowRemovesNewCredential,
+                    backendThrowRollbackFailureWarnsSafely = backendThrowRollbackFailureWarnsSafely,
                     credentialDeletionWorks = credentialDeletionWorks,
                     credentialFailureIsSafe = credentialFailureIsSafe,
                     passwordClearedAfterSave = passwordClearedAfterSave,
@@ -694,6 +782,7 @@ namespace BrightspaceSync.ControlPanel
         internal int RefreshLoginCalls { get; private set; }
         internal int SaveCalls { get; private set; }
         internal SettingsSaveRequest LastSettingsRequest { get; private set; }
+        internal Exception SaveException { get; set; }
 
         public Task<BackendStatus> GetStatusAsync()
         {
@@ -730,6 +819,12 @@ namespace BrightspaceSync.ControlPanel
         {
             SaveCalls++;
             LastSettingsRequest = request;
+            if (SaveException != null)
+            {
+                var failed = new TaskCompletionSource<SettingsSaveResponse>();
+                failed.SetException(SaveException);
+                return failed.Task;
+            }
             if (_settingsSaveResponse != null)
                 return Task.FromResult(_settingsSaveResponse);
             return Task.FromResult(new SettingsSaveResponse
@@ -764,6 +859,7 @@ namespace BrightspaceSync.ControlPanel
         internal bool FailReads { get; set; }
         internal bool FailWrites { get; set; }
         internal bool FailDeletes { get; set; }
+        internal int FailWriteOnCall { get; set; }
         internal int ReadCalls { get; private set; }
         internal int WriteCalls { get; private set; }
         internal int DeleteCalls { get; private set; }
@@ -790,7 +886,8 @@ namespace BrightspaceSync.ControlPanel
         {
             ValidateTarget(target);
             WriteCalls++;
-            if (FailWrites) throw new CredentialStoreException("Windows could not save the Brightspace credential.");
+            if (FailWrites || (FailWriteOnCall > 0 && WriteCalls == FailWriteOnCall))
+                throw new CredentialStoreException("Windows could not save the Brightspace credential.");
             _username = username ?? String.Empty;
             _password = password ?? String.Empty;
         }

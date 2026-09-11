@@ -4,11 +4,13 @@ import net from 'node:net';
 import path from 'node:path';
 import {
   AUTHENTICATED_BRIGHTSPACE_SELECTOR,
+  STONY_BROOK_SSO_HANDOFF_SELECTOR,
   STONY_BROOK_CREDENTIAL_TARGET,
   institutionAdapterForBaseUrl,
   stonyBrookAdapter
 } from './auth-adapters.mjs';
-import { authenticateWithInstitutionAdapter } from './auth-flow.mjs';
+import { authenticateWithInstitutionAdapter, makeChromiumPageVisible } from './auth-flow.mjs';
+import { buildSyncBrowserLaunchOptions } from './browser-launch-options.mjs';
 import { createWindowsCredentialProvider, requestCredentialHelper } from './credential-helper-client.mjs';
 import { runRefreshLogin } from './refresh-login.mjs';
 
@@ -23,11 +25,16 @@ class FakeLocator {
   }
   async count() {
     if (this.selector === AUTHENTICATED_BRIGHTSPACE_SELECTOR) return this.page.authenticated ? 1 : 0;
+    if (this.selector === STONY_BROOK_SSO_HANDOFF_SELECTOR) return this.page.handoffAvailable ? 1 : 0;
     if (this.selector === USERNAME_SELECTOR) return this.page.loginForm ? 1 : 0;
     if (this.selector === PASSWORD_SELECTOR) return this.page.loginForm ? 1 : 0;
     if (this.selector === SUBMIT_SELECTOR) return this.page.loginForm ? 1 : 0;
     if (this.selector.includes('password')) this.page.genericPasswordQueries++;
     return 0;
+  }
+  async getAttribute(name) {
+    if (name === 'href' && this.selector === STONY_BROOK_SSO_HANDOFF_SELECTOR) return this.page.handoffHref;
+    return null;
   }
   async fill(value) {
     this.page.fills.push({ selector: this.selector, value });
@@ -37,6 +44,14 @@ class FakeLocator {
   }
   first() { return this; }
   async click() {
+    if (this.selector === STONY_BROOK_SSO_HANDOFF_SELECTOR) {
+      this.page.handoffClicks++;
+      if (!this.page.handoffSticks) {
+        this.page.currentUrl = this.page.handoffTarget;
+        this.page.loginForm = this.page.handoffProvidesLoginForm;
+      }
+      return;
+    }
     this.page.submits++;
     this.page.currentUrl = 'https://mycourses.stonybrook.edu/d2l/home';
     this.page.authenticated = true;
@@ -44,12 +59,30 @@ class FakeLocator {
 }
 
 class FakePage {
-  constructor({ url, authenticated = false, loginForm = false, mfaCompletes = false, redirectAfterUsernameFill = false }) {
+  constructor({
+    url,
+    authenticated = false,
+    loginForm = false,
+    mfaCompletes = false,
+    authenticatedTarget = 'https://mycourses.stonybrook.edu/d2l/home',
+    redirectAfterUsernameFill = false,
+    handoffAvailable = false,
+    handoffTarget = 'https://sso.cc.stonybrook.edu/idp/profile/SAML2/Redirect/SSO',
+    handoffProvidesLoginForm = false,
+    handoffSticks = false
+  }) {
     this.currentUrl = url;
     this.authenticated = authenticated;
     this.loginForm = loginForm;
     this.mfaCompletes = mfaCompletes;
+    this.authenticatedTarget = authenticatedTarget;
     this.redirectAfterUsernameFill = redirectAfterUsernameFill;
+    this.handoffAvailable = handoffAvailable;
+    this.handoffTarget = handoffTarget;
+    this.handoffProvidesLoginForm = handoffProvidesLoginForm;
+    this.handoffSticks = handoffSticks;
+    this.handoffHref = '/d2l/lp/auth/saml/initiate-login?entityId=https://sso.cc.stonybrook.edu/idp/shibboleth';
+    this.handoffClicks = 0;
     this.fills = [];
     this.submits = 0;
     this.genericPasswordQueries = 0;
@@ -61,7 +94,7 @@ class FakePage {
   frames() { return []; }
   async waitForTimeout() {
     if (this.mfaCompletes) {
-      this.currentUrl = 'https://mycourses.stonybrook.edu/d2l/home';
+      this.currentUrl = this.authenticatedTarget;
       this.authenticated = true;
     }
   }
@@ -111,6 +144,26 @@ const validSession = await authenticateWithInstitutionAdapter({
 assert.equal(validSession.authenticated, true);
 assert.equal(validSessionReads, 0, 'a persistent valid session must not retrieve credentials');
 
+for (const url of [
+  'https://mycourses.stonybrook.edu.evil.test',
+  'http://mycourses.stonybrook.edu',
+  'https://synthetic-user:synthetic-password' + '@mycourses.stonybrook.edu/d2l/home'
+]) {
+  const fakeAuthenticatedPage = new FakePage({ url, authenticated: true });
+  let reads = 0;
+  await assert.rejects(authenticateWithInstitutionAdapter({
+    page: fakeAuthenticatedPage,
+    context: {},
+    config: config(),
+    credentialProvider: { async read() { reads++; return null; } },
+    makeVisible: async () => {},
+    log: quietLog(),
+    timeoutMs: 50,
+    pollMs: 0
+  }), /unexpected authentication host/i);
+  assert.equal(reads, 0, 'authenticated-looking DOM on an untrusted origin must not retrieve credentials');
+}
+
 const fakeUsername = 'SyntheticStudent';
 const fakePassword = 'SyntheticPasswordValue123';
 const trustedPage = new FakePage({ url: 'https://sso.cc.stonybrook.edu/idp/profile/SAML2/Redirect/SSO', loginForm: true });
@@ -140,6 +193,77 @@ assert.deepEqual(trustedPage.fills, [
 assert.equal(trustedPage.submits, 1);
 assert.equal(trustedLog.messages.join('\n').includes(fakePassword), false);
 assert.equal(trustedLog.messages.join('\n').includes(fakeUsername), false);
+
+const handoffPage = new FakePage({
+  url: 'https://mycourses.stonybrook.edu/d2l/login',
+  handoffAvailable: true,
+  handoffProvidesLoginForm: true
+});
+let handoffReads = 0;
+const handoffResult = await authenticateWithInstitutionAdapter({
+  page: handoffPage,
+  context: {},
+  config: config(),
+  credentialProvider: {
+    async read() {
+      handoffReads++;
+      assert.equal(stonyBrookAdapter.isTrustedSsoUrl(handoffPage.url()), true, 'credential read occurred before trusted SSO');
+      return { username: fakeUsername, password: fakePassword };
+    }
+  },
+  makeVisible: async () => {},
+  log: quietLog(),
+  pollMs: 0
+});
+assert.equal(handoffResult.authenticated, true);
+assert.equal(handoffPage.handoffClicks, 1, 'institutional handoff must be initiated exactly once');
+assert.equal(handoffReads, 1);
+
+const wrongHandoffPage = new FakePage({
+  url: 'https://mycourses.stonybrook.edu/d2l/login',
+  handoffAvailable: true,
+  handoffTarget: 'https://sso.cc.stonybrook.edu.evil.test/login',
+  handoffProvidesLoginForm: true
+});
+let wrongHandoffReads = 0;
+await assert.rejects(authenticateWithInstitutionAdapter({
+  page: wrongHandoffPage,
+  context: {},
+  config: config(),
+  credentialProvider: { async read() { wrongHandoffReads++; return null; } },
+  makeVisible: async () => {},
+  log: quietLog(),
+  pollMs: 0
+}), /unexpected authentication host/i);
+assert.equal(wrongHandoffPage.handoffClicks, 1);
+assert.equal(wrongHandoffReads, 0, 'wrong handoff destination must fail before credential access');
+
+const stuckHandoffPage = new FakePage({
+  url: 'https://mycourses.stonybrook.edu/d2l/login',
+  handoffAvailable: true,
+  handoffSticks: true
+});
+await assert.rejects(authenticateWithInstitutionAdapter({
+  page: stuckHandoffPage,
+  context: {},
+  config: config(),
+  credentialProvider: { async read() { throw new Error('credential read must not occur'); } },
+  makeVisible: async () => {},
+  log: quietLog(),
+  pollMs: 0
+}), /handoff did not complete/i);
+assert.equal(stuckHandoffPage.handoffClicks, 1, 'a stalled handoff must never be clicked repeatedly');
+
+const missingHandoffPage = new FakePage({ url: 'https://mycourses.stonybrook.edu/d2l/login' });
+await assert.rejects(authenticateWithInstitutionAdapter({
+  page: missingHandoffPage,
+  context: {},
+  config: config(),
+  credentialProvider: { async read() { throw new Error('credential read must not occur'); } },
+  makeVisible: async () => {},
+  log: quietLog(),
+  pollMs: 0
+}), /control was not recognized.*Refresh Login/i);
 
 const credentialFailurePage = new FakePage({ url: 'https://sso.cc.stonybrook.edu/login', loginForm: true });
 const credentialFailureLog = quietLog();
@@ -195,7 +319,12 @@ for (const url of [
   assert.equal(page.fills.length, 0, 'untrusted origin must not receive credentials');
 }
 
-const genericPasswordPage = new FakePage({ url: 'https://generic.example.test/login', loginForm: true, mfaCompletes: true });
+const genericPasswordPage = new FakePage({
+  url: 'https://generic.example.test/login',
+  loginForm: true,
+  mfaCompletes: true,
+  authenticatedTarget: 'https://generic.example.test/d2l/home'
+});
 let genericReads = 0;
 await authenticateWithInstitutionAdapter({
   page: genericPasswordPage,
@@ -224,6 +353,42 @@ const mfaResult = await authenticateWithInstitutionAdapter({
 assert.equal(mfaResult.humanEscalation, true);
 assert.equal(visibleEscalations, 1);
 assert.equal(mfaReads, 0, 'MFA must not retrieve or submit credentials');
+
+const backgroundOptions = buildSyncBrowserLaunchOptions(
+  config({ headless: true, auth: { automaticLoginEnabled: false } }),
+  path.resolve('Browser', 'browser.exe')
+);
+assert.equal(backgroundOptions.headless, false, 'background sync must retain a real browser window');
+assert.equal(backgroundOptions.args.includes('--start-minimized'), true, 'former headless mode must start minimized');
+const automaticOptions = buildSyncBrowserLaunchOptions(config({ headless: false }), path.resolve('Browser', 'browser.exe'));
+assert.equal(automaticOptions.headless, false);
+assert.equal(automaticOptions.args.includes('--start-minimized'), true, 'automatic Stony Brook sign-in must start minimized');
+const foregroundOptions = buildSyncBrowserLaunchOptions(
+  config({ headless: false, auth: { automaticLoginEnabled: false } }),
+  path.resolve('Browser', 'browser.exe')
+);
+assert.equal(foregroundOptions.headless, false);
+assert.equal(foregroundOptions.args.includes('--start-minimized'), false, 'ordinary foreground mode must not be minimized');
+
+const visibilityCalls = [];
+const visibilityPage = new FakePage({ url: 'https://api-123.duosecurity.com/frame/v4/auth' });
+await makeChromiumPageVisible({
+  async newCDPSession() {
+    return {
+      async send(method, payload) {
+        visibilityCalls.push({ method, payload });
+        if (method === 'Browser.getWindowForTarget') return { windowId: 7 };
+        return {};
+      },
+      async detach() { visibilityCalls.push({ method: 'detach' }); }
+    };
+  }
+}, visibilityPage);
+assert.deepEqual(visibilityCalls[1], {
+  method: 'Browser.setWindowBounds',
+  payload: { windowId: 7, bounds: { windowState: 'normal' } }
+});
+assert.equal(visibilityPage.broughtToFront, 1, 'human escalation must restore and focus the headed browser window');
 
 const providerOperations = [];
 const provider = createWindowsCredentialProvider({

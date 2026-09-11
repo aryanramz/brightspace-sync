@@ -337,6 +337,10 @@ try {
   assert.equal(controlPanelResult.credentialPayloadExcludedFromBackend, true);
   assert.equal(controlPanelResult.credentialReplacementWorks, true);
   assert.equal(controlPanelResult.rejectedSettingsRestoreCredential, true);
+  assert.equal(controlPanelResult.backendThrowRestoresReplacedCredential, true);
+  assert.equal(controlPanelResult.backendThrowRestoresDeletedCredential, true);
+  assert.equal(controlPanelResult.backendThrowRemovesNewCredential, true);
+  assert.equal(controlPanelResult.backendThrowRollbackFailureWarnsSafely, true);
   assert.equal(controlPanelResult.credentialDeletionWorks, true);
   assert.equal(controlPanelResult.credentialFailureIsSafe, true);
   assert.equal(controlPanelResult.passwordClearedAfterSave, true);
