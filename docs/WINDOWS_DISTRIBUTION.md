@@ -187,6 +187,36 @@ Normal sync first tests the persistent profile. A valid session continues withou
 
 This first adapter intentionally depends on the currently recognized Stony Brook Brightspace login control and SSO page structure. Authenticated state requires both the trusted configured Brightspace origin and Brightspace UI evidence. Unexpected authentication states or handoff destinations fail closed and direct the user to Refresh Login. Future adapter changes must be reviewed against the live institutional flow without weakening exact-origin validation. Credential Manager protects credentials for the signed-in Windows account; it is not intended to defend against malicious code already running as that same user.
 
+## Windows background scheduling (Milestone 2B.4)
+
+Automatic sync is off by default and remains an explicit user choice in the shared first-run/Settings form. The existing config schema now retains:
+
+```json
+{
+  "schedule": {
+    "enabled": false,
+    "intervalHours": 6,
+    "fullIntervalDays": 7
+  }
+}
+```
+
+The UI accepts a recurrence from 1–24 hours and a Full Sync interval from 1–30 days. A legacy `schedule` object containing only `fullIntervalDays` remains valid in memory with scheduling disabled and the six-hour default; reading it does not rewrite the config, and unknown schedule keys are preserved on save.
+
+When enabled, Brightspace Sync owns exactly one task under `\Brightspace Sync`. Its name is `Scheduled Sync - <current-user-SID>`, derived from the stable Windows security identifier rather than the renameable account name. Each Windows account therefore addresses only its own managed task. It is registered for that same SID with **interactive-token** logon and least privilege, so it runs only while that user is signed in and stores no Windows password. The task does not wake the computer, runs on battery, starts when a missed trigger becomes available, and ignores a second trigger while an instance is already active. Its action contains only the canonical installed `Brightspace Sync.exe` path and the fixed argument `--scheduled-run`; SID, URL, mirror, Drive, credential, and other settings never appear in the action arguments.
+
+`--scheduled-run` is handled before the control-panel mutex or WinForms startup. The WinExe launches the private packaged Node runtime and fixed `scheduled` launcher command without a console, waits for completion, and returns its exit code. Node chooses Full when no successful Full Sync is recorded or the configured Full interval has elapsed; otherwise it chooses Quick. Malformed status is treated conservatively as requiring Full. The existing Node operation lock remains the final concurrency authority, and a scheduled overlap returns a distinct safe status rather than starting a second crawler.
+
+The sync browser remains headed so login or MFA can be completed, but a scheduled launch starts minimized. A valid persistent session completes without user interaction. An authentication failure returns a dedicated non-secret result, records only `refresh-login-required`, and creates a private state latch. Later scheduled triggers stop before launching a browser or reading a credential until successful Refresh Login, a successful manual Quick/Full Sync, or an intentional authentication/credential update clears the latch. The latch contains no account, URL, credential, token, cookie, or form data and never enters the mirror or Drive.
+
+Settings treats an enabled schedule, cadence change, or disable operation as one coordinated Task Scheduler/config transaction. It snapshots the current user's exact managed task, applies the requested registration first, then saves config through the existing Node transaction. A required task-registration failure leaves config unchanged; a config failure restores the exact prior task definition. Credential and scheduling changes use the same rollback path, and any incomplete rollback is surfaced as requiring manual review. When config is already disabled, Task Scheduler unavailability does not block unrelated URL, mirror, Drive, or authentication saves. A stale task is safe because the Node scheduled entry point checks `schedule.enabled` before syncing; Settings shows a nonfatal review warning and reconciles the stale task once Task Scheduler becomes available again.
+
+Opening Settings compares the current user's task with the current binary path, cadence, interactive-token logon, least privilege, battery/wake policy, fixed action, and indefinite lifetime policy. `ExecutionTimeLimit` is `PT0S`, repetition has no finite duration, and the trigger has no `EndBoundary`, leaving Brightspace Sync's own operation/authentication timeouts and lock lifecycle authoritative. A finite or otherwise altered task is repaired on the next successful Save. Disabling removes only the current SID's exact managed task and leaves other users' and unrelated Task Scheduler entries untouched.
+
+Scheduled outcomes append to the private Node-resolved `logs\scheduled.log`. The file is bounded to 64 KiB and contains only timestamp, selected mode, exit code, and a fixed high-level category, including `refresh-login-required`. It never contains crawler output, page content, URLs, usernames, credentials, tokens, cookies, or raw errors.
+
+Automated tests use a mock Task Scheduler service to prove idempotent create/update/delete, exact-definition rollback, combined credential rollback, reconciliation, and partial-failure reporting without altering a developer or hosted runner's real task library. The packaged Windows test exercises the actual `Brightspace Sync.exe --scheduled-run` → private Node path with isolated external data and no configured site, proving the no-UI/no-console entry point without contacting Brightspace. A real disposable Task Scheduler registration test is intentionally not part of routine CI because it would mutate host-level scheduled-task state.
+
 ## Deferred / Later Improvements
 
 The items below are **non-blocking**. They are not required before moving to installer and UI work, and they do not prevent the Windows distribution foundation from being considered complete.
@@ -212,7 +242,6 @@ The items below are **non-blocking**. They are not required before moving to ins
 The following work remains intentionally deferred to later milestones:
 
 - Start Menu shortcuts
-- scheduling UI and Task Scheduler integration
 - repair behavior
 - uninstall behavior
 - choices to preserve or delete user data during uninstall
@@ -223,6 +252,6 @@ The following work remains intentionally deferred to later milestones:
 - code signing
 - optional automatic updates
 
-Milestone 2B.4 still covers Task Scheduler, recurring background sync, and scheduling UI. Additional institution adapters and changes required by future SSO page revisions remain later enhancements. Installer, upgrade, repair, uninstall, signing, and release behavior remain part of Milestone 2C.
+Additional institution adapters and changes required by future SSO page revisions remain later enhancements. Installer, upgrade, repair, uninstall, signing, and release behavior remain part of Milestone 2C.
 
 No installer artifact should be published until the applicable install, upgrade, repair, and uninstall flows pass end-to-end testing.

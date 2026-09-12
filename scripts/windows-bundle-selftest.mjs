@@ -294,6 +294,7 @@ try {
   assert.equal(await canonicalWindowsPath(controlPanelResult.quickProcessFileName), await canonicalWindowsPath(privateNode));
   assert.equal(await canonicalWindowsPath(controlPanelResult.fullProcessFileName), await canonicalWindowsPath(privateNode));
   assert.equal(await canonicalWindowsPath(controlPanelResult.refreshLoginProcessFileName), await canonicalWindowsPath(privateNode));
+  assert.equal(await canonicalWindowsPath(controlPanelResult.scheduledProcessFileName), await canonicalWindowsPath(privateNode));
   assert.equal(await canonicalWindowsPath(controlPanelResult.settingsSaveProcessFileName), await canonicalWindowsPath(privateNode));
   assert.equal(await canonicalWindowsPath(controlPanelResult.launcherScript), await canonicalWindowsPath(packagedLauncherModule));
   assert.equal(await canonicalWindowsPath(controlPanelResult.workingDirectory), await canonicalWindowsPath(appRoot));
@@ -301,6 +302,7 @@ try {
   assert.equal(controlPanelResult.quickProcessArguments, `"${controlPanelResult.launcherScript}" quick`);
   assert.equal(controlPanelResult.fullProcessArguments, `"${controlPanelResult.launcherScript}" full`);
   assert.equal(controlPanelResult.refreshLoginProcessArguments, `"${controlPanelResult.launcherScript}" refresh-login`);
+  assert.equal(controlPanelResult.scheduledProcessArguments, `"${controlPanelResult.launcherScript}" scheduled`);
   assert.equal(controlPanelResult.settingsSaveProcessArguments, `"${controlPanelResult.launcherScript}" settings save --json`);
   assert.equal(controlPanelResult.settingsSaveRedirectStandardInput, true, 'settings save must send its payload through stdin');
   assert.equal(controlPanelResult.useShellExecute, false);
@@ -320,10 +322,14 @@ try {
   assert.equal(controlPanelResult.settingsMirrorOverrideActive, true);
   assert.equal(controlPanelResult.settingsAuthenticationSupported, false);
   assert.equal(controlPanelResult.settingsAutomaticLoginEnabled, false);
+  assert.equal(controlPanelResult.settingsScheduleEnabled, false);
+  assert.equal(controlPanelResult.settingsScheduleIntervalHours, 6);
+  assert.equal(controlPanelResult.settingsScheduleFullIntervalDays, 7);
   assert.equal(controlPanelResult.settingsPayloadAbsentFromArguments, true);
   assert.equal(controlPanelResult.firstRunSetupTriggered, true, 'unconfigured startup must invoke the shared first-run settings flow');
   assert.equal(controlPanelResult.firstRunCancelDisabledSync, true, 'cancelling first-run setup must leave sync disabled');
   assert.equal(controlPanelResult.firstRunUsesKnownDocuments, true, 'fresh setup must use the Windows Documents known folder default');
+  assert.equal(controlPanelResult.firstRunScheduleDefaultsOff, true, 'fresh setup must leave automatic sync off by default');
   assert.equal(controlPanelResult.firstRunPreservesCustomMirror, true, 'first-run URL repair must preserve an existing custom mirror');
   assert.equal(controlPanelResult.firstRunPreservesMeaningfulDefault, true, 'first-run URL repair must preserve a meaningful generated mirror');
   assert.equal(controlPanelResult.firstRunPreservesEnvironmentOverride, true, 'first-run setup must preserve an environment-controlled mirror');
@@ -332,6 +338,23 @@ try {
   assert.equal(controlPanelResult.environmentOverrideIsReadOnly, true, 'an environment-controlled mirror must not appear editable in Settings');
   assert.equal(controlPanelResult.recoverySurvivesBackendBridge, true, 'mirror recovery details must survive JSON deserialization');
   assert.equal(controlPanelResult.recoveryPresentedToUi, true, 'mirror recovery details must be presented by the Settings UI');
+  assert.equal(controlPanelResult.scheduledEntrypointSelected, true, 'scheduled-run must use the non-UI entry point only for its fixed argument');
+  assert.equal(controlPanelResult.scheduledEntrypointReturnsBackendCode, true, 'scheduled-run must return the private backend exit code');
+  assert.equal(controlPanelResult.scheduleEnableSaved, true, 'schedule settings must be included in the shared save transaction');
+  assert.equal(controlPanelResult.disabledScheduleDoesNotRequireTaskScheduler, true, 'disabled scheduling must not block unrelated settings when Task Scheduler is unavailable');
+  assert.equal(controlPanelResult.unavailableEnableLeavesConfigDisabled, true, 'enabling scheduling must fail before config save when Task Scheduler is unavailable');
+  assert.equal(controlPanelResult.unavailableCadenceChangeFailsSafely, true, 'enabled cadence changes must require Task Scheduler');
+  assert.equal(controlPanelResult.unavailableDisableCannotAccidentallyEnable, true, 'failed disabling must retain the prior coordinated state');
+  assert.equal(controlPanelResult.laterAvailabilityRepairsStaleTask, true, 'a stale disabled task must reconcile when Task Scheduler becomes available');
+  assert.equal(controlPanelResult.configFailureRestoresExactTask, true, 'config failure must restore the exact prior scheduled task');
+  assert.equal(controlPanelResult.taskCreationFailureLeavesConfigDisabled, true, 'task registration failure must not save enabled configuration');
+  assert.equal(controlPanelResult.taskRollbackFailureSurfaced, true, 'scheduled-task rollback failure must require manual review');
+  assert.equal(controlPanelResult.scheduleDisableDeletesExactTask, true, 'disabling schedule must delete only the exact managed task');
+  assert.equal(controlPanelResult.combinedCredentialAndTaskRollback, true, 'combined credential and schedule changes must rollback together');
+  assert.equal(controlPanelResult.perUserTaskIdentityIsolated, true, 'managed scheduled-task identity must be distinct for each Windows user SID');
+  assert.equal(controlPanelResult.taskIdentityAndArgumentsAreFixed, true, 'Task Scheduler identity and command must be fixed');
+  assert.equal(controlPanelResult.indefiniteTaskPolicyValidated, true, 'finite execution, repetition, and trigger windows must require repair');
+  assert.equal(controlPanelResult.obsoleteTaskDetectedAndRepaired, true, 'Settings must detect and reconcile an obsolete managed task');
   assert.equal(controlPanelResult.existingPasswordNotRedisplayed, true);
   assert.equal(controlPanelResult.blankPasswordKeepsCredential, true);
   assert.equal(controlPanelResult.credentialPayloadExcludedFromBackend, true);
@@ -367,6 +390,35 @@ try {
   await assertTreeOmitsText(mirrorDir, ['SyntheticStudent', 'SyntheticPasswordValue123', 'ReplacementPasswordValue456']);
   assert.deepEqual(await snapshotTree(portableRoot), before, 'packaged control-panel bridge must not modify the application bundle');
   console.log('Packaged Windows control-panel bridge: PASS');
+
+  const scheduledDataDir = path.join(temp, 'scheduled-runtime-data');
+  const scheduledMirrorDir = path.join(temp, 'scheduled-mirror');
+  await fs.mkdir(scheduledDataDir, { recursive: true });
+  const scheduledConfig = JSON.parse(await fs.readFile(path.join(appRoot, 'config.example.json'), 'utf8'));
+  scheduledConfig.baseUrl = '';
+  scheduledConfig.outputDir = scheduledMirrorDir;
+  scheduledConfig.schedule = { enabled: true, intervalHours: 6, fullIntervalDays: 7 };
+  await fs.writeFile(path.join(scheduledDataDir, 'config.json'), `${JSON.stringify(scheduledConfig, null, 2)}\n`);
+  const scheduledEntry = await run(controlPanel, ['--scheduled-run'], {
+    cwd: unrelatedCwd,
+    env: {
+      ...controlPanelEnv,
+      BRIGHTSPACE_SYNC_DATA_DIR: scheduledDataDir,
+      BRIGHTSPACE_SYNC_MIRROR_DIR: scheduledMirrorDir
+    },
+    label: 'packaged scheduled-run entry point'
+  });
+  assert.equal(scheduledEntry.code, 2, 'an unconfigured scheduled run must return its safe configuration-required exit code');
+  assert.equal(scheduledEntry.stdout, '', 'scheduled-run must not emit backend output');
+  assert.equal(scheduledEntry.stderr, '', 'scheduled-run must not emit raw backend errors');
+  const scheduledLog = await fs.readFile(path.join(scheduledDataDir, 'logs', 'scheduled.log'), 'utf8');
+  const scheduledLogEntry = JSON.parse(scheduledLog.trim().split(/\r?\n/).at(-1));
+  assert.deepEqual(Object.keys(scheduledLogEntry), ['timestamp', 'mode', 'exitCode', 'category']);
+  assert.equal(scheduledLogEntry.mode, null);
+  assert.equal(scheduledLogEntry.exitCode, 2);
+  assert.equal(scheduledLogEntry.category, 'configuration-required');
+  assert.deepEqual(await snapshotTree(portableRoot), before, 'packaged scheduled-run entry point must not modify the application bundle');
+  console.log('Packaged scheduled-run entry point: PASS (private Node, no UI/output, external data only)');
 
   const packagedBrowserModule = path.join(appRoot, 'src', 'browser.mjs');
   const packagedPlaywrightModule = path.join(appRoot, 'node_modules', 'playwright', 'index.mjs');

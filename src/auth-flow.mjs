@@ -3,6 +3,7 @@ import {
   institutionAdapterForBaseUrl,
   isTrustedBrightspaceUrl
 } from './auth-adapters.mjs';
+import { authenticationAttentionError } from './auth-attention.mjs';
 
 async function isAuthenticated(page, configuredBaseUrl) {
   if (!isTrustedBrightspaceUrl(page.url(), configuredBaseUrl)) return false;
@@ -62,19 +63,19 @@ export async function authenticateWithInstitutionAdapter({
         return { authenticated: true, credentialRetrieved, humanEscalation };
       }
       if (inspection.state === 'unexpected') {
-        throw new Error('Automatic sign-in stopped at an unexpected authentication host. Use Refresh Login.');
+        throw authenticationAttentionError('Automatic sign-in stopped at an unexpected authentication host. Use Refresh Login.');
       }
       if (inspection.state === 'brightspace-wait') {
-        throw new Error('The Stony Brook institutional sign-in control was not recognized. Use Refresh Login.');
+        throw authenticationAttentionError('The Stony Brook institutional sign-in control was not recognized. Use Refresh Login.');
       }
       if (inspection.state === 'institution-login') {
         if (handoffInitiated) {
-          throw new Error('The Stony Brook institutional sign-in handoff did not complete. Use Refresh Login.');
+          throw authenticationAttentionError('The Stony Brook institutional sign-in handoff did not complete. Use Refresh Login.');
         }
         try {
           await adapter.beginSsoHandoff(page);
         } catch {
-          throw new Error('The Stony Brook institutional sign-in handoff could not be completed. Use Refresh Login.');
+          throw authenticationAttentionError('The Stony Brook institutional sign-in handoff could not be completed. Use Refresh Login.');
         }
         handoffInitiated = true;
       } else if (inspection.state === 'mfa') {
@@ -95,7 +96,7 @@ export async function authenticateWithInstitutionAdapter({
           submitted = true;
           log.log('Stored Windows credential submitted to the trusted institution sign-in page.');
         } catch {
-          throw new Error('Automatic sign-in could not use the saved Windows credential. Open Settings or use Refresh Login.');
+          throw authenticationAttentionError('Automatic sign-in could not use the saved Windows credential. Open Settings or use Refresh Login.');
         } finally {
           if (credential) {
             credential.username = '';
@@ -108,5 +109,5 @@ export async function authenticateWithInstitutionAdapter({
 
     await page.waitForTimeout(pollMs);
   }
-  throw new Error('Timed out waiting for Brightspace authentication. Use Refresh Login.');
+  throw authenticationAttentionError('Timed out waiting for Brightspace authentication. Use Refresh Login.');
 }

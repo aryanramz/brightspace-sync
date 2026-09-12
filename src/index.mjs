@@ -28,6 +28,12 @@ import { acquireSyncLock, describeActiveLock } from './sync-lock.mjs';
 import { authenticateWithInstitutionAdapter, makeChromiumPageVisible } from './auth-flow.mjs';
 import { buildSyncBrowserLaunchOptions } from './browser-launch-options.mjs';
 import { createWindowsCredentialProvider } from './credential-helper-client.mjs';
+import {
+  AUTH_ATTENTION_EXIT_CODE,
+  isAuthenticationAttentionError,
+  runAndClearAuthAttention,
+  setAuthAttention
+} from './auth-attention.mjs';
 
 const APP_VERSION = '2.4.1';
 
@@ -61,7 +67,7 @@ function termDisplay(terms) {
   return terms?.length ? terms.map(t => t.label).join(', ') : '(none)';
 }
 
-async function runSync(mode, config) {
+async function runSync(mode, config, { scheduledRun = false } = {}) {
   if (!config.baseUrl) throw new Error(`baseUrl is missing from ${config.configFile}.`);
   await ensureDir(config.outputDir);
   await ensureDir(config.profileDir);
@@ -103,7 +109,7 @@ async function runSync(mode, config) {
 
   const context = await chromium.launchPersistentContext(
     config.profileDir,
-    buildSyncBrowserLaunchOptions(config, browser.path)
+    buildSyncBrowserLaunchOptions(config, browser.path, { scheduledRun })
   );
 
   await new Promise(resolve => setTimeout(resolve, 700));
@@ -281,6 +287,7 @@ async function runSync(mode, config) {
 
 async function main() {
   const mode = requestedMode();
+  const scheduledRun = process.argv.includes('--scheduled-run');
   const { config, paths, migrations } = await loadAppConfig({ mode });
   if (migrations.length) console.log(`Runtime data migration: ${migrations.length} action(s) applied.`);
   await ensureDir(paths.lockDir);
@@ -289,6 +296,7 @@ async function main() {
     console.log(`Brightspace Sync v${APP_VERSION} — ${mode.toUpperCase()} mode`);
     console.log(`Another Brightspace operation is already running: ${describeActiveLock(lock)}.`);
     console.log('This run was skipped to protect the mirror from overlapping writes.');
+    if (scheduledRun) process.exitCode = 3;
     return;
   }
 
@@ -300,13 +308,33 @@ async function main() {
   process.once('SIGTERM', () => { void releaseAndExit(143); });
 
   try {
-    await runSync(mode, config);
+    try {
+      if (scheduledRun) {
+        await runSync(mode, config, { scheduledRun: true });
+      } else {
+        await runAndClearAuthAttention(
+          () => runSync(mode, config, { scheduledRun: false }),
+          paths.stateDir
+        );
+      }
+    } catch (error) {
+      if (scheduledRun && isAuthenticationAttentionError(error)) {
+        await setAuthAttention(paths.stateDir).catch(() => {});
+        process.exitCode = AUTH_ATTENTION_EXIT_CODE;
+        return;
+      }
+      throw error;
+    }
   } finally {
     await lock.release();
   }
 }
 
 main().catch(error => {
-  console.error(`\nERROR: ${error.stack || error.message}`);
+  if (isAuthenticationAttentionError(error)) {
+    console.error('\nERROR: Brightspace authentication requires attention. Use Refresh Login.');
+  } else {
+    console.error(`\nERROR: ${error.stack || error.message}`);
+  }
   process.exitCode = 1;
 });

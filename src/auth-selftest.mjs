@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs/promises';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import {
   AUTHENTICATED_BRIGHTSPACE_SELECTOR,
@@ -13,6 +15,12 @@ import { authenticateWithInstitutionAdapter, makeChromiumPageVisible } from './a
 import { buildSyncBrowserLaunchOptions } from './browser-launch-options.mjs';
 import { createWindowsCredentialProvider, requestCredentialHelper } from './credential-helper-client.mjs';
 import { runRefreshLogin } from './refresh-login.mjs';
+import {
+  hasAuthAttention,
+  isAuthenticationAttentionError,
+  runAndClearAuthAttention,
+  setAuthAttention
+} from './auth-attention.mjs';
 
 const USERNAME_SELECTOR = '#username';
 const PASSWORD_SELECTOR = '#password';
@@ -277,6 +285,7 @@ const credentialFailure = await authenticateWithInstitutionAdapter({
   pollMs: 0
 }).then(() => null, error => error);
 assert.ok(credentialFailure instanceof Error);
+assert.equal(isAuthenticationAttentionError(credentialFailure), true);
 assert.equal(credentialFailure.message.includes(fakePassword), false);
 assert.equal(credentialFailure.message.includes(fakeUsername), false);
 assert.equal(credentialFailureLog.messages.join('\n').includes(fakePassword), false);
@@ -443,6 +452,9 @@ assert.equal(safeHelperFailure.message.includes(fakePassword), false);
 assert.equal(safeHelperFailure.message.includes(fakeUsername), false);
 
 const refreshProfile = path.resolve('External Runtime Data', 'BrowserProfile');
+const attentionTestRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'brightspace-auth-attention-'));
+const refreshState = path.join(attentionTestRoot, 'state');
+await setAuthAttention(refreshState);
 let refreshLaunch;
 let refreshAuthenticated = 0;
 let refreshVisible = 0;
@@ -454,6 +466,7 @@ await runRefreshLogin({
     config: {
       baseUrl: 'https://mycourses.stonybrook.edu',
       profileDir: refreshProfile,
+      stateDir: refreshState,
       browserExecutablePath: '',
       navigationTimeoutMs: 1000,
       auth: { manualLoginTimeoutMs: 1000 }
@@ -483,6 +496,14 @@ assert.equal(refreshAuthenticated, 1);
 assert.equal(refreshVisible, 1);
 assert.equal(refreshClosed, 1);
 assert.equal(refreshReleased, 1);
+assert.equal(await hasAuthAttention(refreshState), false, 'successful Refresh Login must clear auth attention');
+
+await setAuthAttention(refreshState);
+let manualSyncRuns = 0;
+await runAndClearAuthAttention(async () => { manualSyncRuns += 1; }, refreshState);
+assert.equal(manualSyncRuns, 1);
+assert.equal(await hasAuthAttention(refreshState), false, 'successful manual Quick/Full wrapper must clear auth attention');
+await fs.rm(attentionTestRoot, { recursive: true, force: true });
 
 const allTestOutput = JSON.stringify({ trustedLog: trustedLog.messages, capturedLaunch });
 assert.equal(allTestOutput.includes(fakeUsername), false);

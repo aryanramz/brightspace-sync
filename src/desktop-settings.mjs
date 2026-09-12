@@ -7,6 +7,8 @@ import { resolveRuntimePaths } from './runtime-paths.mjs';
 import { acquireSyncLock } from './sync-lock.mjs';
 import { normalizeBrightspaceBaseUrl } from './brightspace-url.mjs';
 import { institutionAdapterForBaseUrl } from './auth-adapters.mjs';
+import { normalizeScheduleConfig, validateScheduleRequest } from './schedule-config.mjs';
+import { clearAuthAttention } from './auth-attention.mjs';
 
 export const DESKTOP_SETTINGS_SCHEMA_VERSION = 1;
 
@@ -165,6 +167,7 @@ async function safeSettings({ config, paths, raw }, io = fs) {
       institution: adapter?.id || '',
       automaticLoginEnabled: Boolean(adapter && config.auth?.automaticLoginEnabled)
     },
+    schedule: normalizeScheduleConfig(config.schedule),
     drive: {
       enabled: Boolean(config.drivePublish.enabled),
       destination: config.drivePublish.destination || ''
@@ -359,6 +362,10 @@ async function validateRequest(request, loaded, io) {
   if (automaticLoginEnabled && !adapter) {
     errors.push(validationError('authentication.automaticLoginEnabled', 'unsupported-institution', 'Automatic sign-in is not available for this Brightspace site.'));
   }
+  const requestedSchedule = request?.schedule == null
+    ? { errors: [], schedule: normalizeScheduleConfig(loaded.config.schedule) }
+    : validateScheduleRequest(request.schedule, validationError);
+  errors.push(...requestedSchedule.errors);
 
   const [appRoot, dataDir, existingMirror] = await Promise.all([
     canonicalFilesystemPath(loaded.paths.appRoot, io),
@@ -402,6 +409,8 @@ async function validateRequest(request, loaded, io) {
     driveDestination: driveDestination?.physicalPath || '',
     mirrorAction,
     automaticLoginEnabled,
+    authenticationRetryRequested: request?.authentication?.retryRequested === true,
+    schedule: requestedSchedule.schedule,
     appRoot: appRoot.physicalPath,
     dataDir: dataDir.physicalPath
   };
@@ -496,6 +505,10 @@ export async function saveDesktopSettings(request, { runtime = {}, fileSystem = 
           auth: {
             ...(loaded.raw.auth || {}),
             automaticLoginEnabled: normalized.automaticLoginEnabled
+          },
+          schedule: {
+            ...(loaded.raw.schedule || {}),
+            ...normalized.schedule
           }
         };
 
@@ -517,6 +530,10 @@ export async function saveDesktopSettings(request, { runtime = {}, fileSystem = 
 
         // The atomic config write is the commit boundary. Nothing below this
         // point may roll the filesystem movement back.
+        if (normalized.authenticationRetryRequested
+          || normalized.automaticLoginEnabled !== Boolean(loaded.config.auth?.automaticLoginEnabled)) {
+          await clearAuthAttention(paths.stateDir).catch(() => {});
+        }
         await movement.commit().catch(() => {});
         const committedConfig = {
           ...loaded.config,
@@ -530,7 +547,8 @@ export async function saveDesktopSettings(request, { runtime = {}, fileSystem = 
           auth: {
             ...loaded.config.auth,
             automaticLoginEnabled: normalized.automaticLoginEnabled
-          }
+          },
+          schedule: normalized.schedule
         };
         return {
           schemaVersion: DESKTOP_SETTINGS_SCHEMA_VERSION,
