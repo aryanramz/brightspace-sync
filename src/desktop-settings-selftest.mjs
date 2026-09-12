@@ -27,7 +27,8 @@ async function makeRuntime(root, name, extraEnv = {}) {
       verifyDestinationOnFull: true,
       retryAttempts: 4,
       retryDelayMs: 700
-    }
+    },
+    schedule: { enabled: false, intervalHours: 6, fullIntervalDays: 7 }
   }, null, 2));
   return {
     appRoot,
@@ -45,7 +46,10 @@ function request(baseUrl, mirrorDir, {
   driveEnabled = false,
   driveDestination = '',
   mirrorAction = '',
-  automaticLoginEnabled = false
+  automaticLoginEnabled = false,
+  scheduleEnabled = false,
+  intervalHours = 6,
+  fullIntervalDays = 7
 } = {}) {
   return {
     schemaVersion: 1,
@@ -53,6 +57,7 @@ function request(baseUrl, mirrorDir, {
     mirrorDir,
     drive: { enabled: driveEnabled, destination: driveDestination },
     authentication: { automaticLoginEnabled },
+    schedule: { enabled: scheduleEnabled, intervalHours, fullIntervalDays },
     ...(mirrorAction ? { mirrorAction } : {})
   };
 }
@@ -161,17 +166,49 @@ try {
   const basicRuntime = await makeRuntime(temp, 'Basic');
   const basicPaths = resolveRuntimePaths(basicRuntime);
   const initial = await getDesktopSettings({ runtime: basicRuntime });
-  assert.deepEqual(Object.keys(initial).sort(), ['authentication', 'baseUrl', 'configured', 'drive', 'maySuggestFirstRunMirror', 'mirrorDir', 'mirrorOverrideActive', 'schemaVersion']);
+  assert.deepEqual(Object.keys(initial).sort(), ['authentication', 'baseUrl', 'configured', 'drive', 'maySuggestFirstRunMirror', 'mirrorDir', 'mirrorOverrideActive', 'schedule', 'schemaVersion']);
   assert.deepEqual(Object.keys(initial.drive).sort(), ['destination', 'enabled']);
   assert.deepEqual(Object.keys(initial.authentication).sort(), ['automaticLoginEnabled', 'institution', 'supported']);
+  assert.deepEqual(Object.keys(initial.schedule).sort(), ['enabled', 'fullIntervalDays', 'intervalHours']);
   assert.equal(initial.schemaVersion, 1);
   assert.equal(initial.configured, false);
   assert.equal(initial.baseUrl, '');
   assert.equal(initial.drive.enabled, false);
   assert.equal(initial.drive.destination, '');
   assert.deepEqual(initial.authentication, { supported: false, institution: '', automaticLoginEnabled: false });
+  assert.deepEqual(initial.schedule, { enabled: false, intervalHours: 6, fullIntervalDays: 7 });
   assert.equal(initial.mirrorOverrideActive, false);
   assert.equal(initial.maySuggestFirstRunMirror, true, 'a genuinely fresh generated mirror may use the Windows known-folder suggestion');
+
+  const scheduleRuntime = await makeRuntime(temp, 'Schedule Compatibility');
+  const schedulePaths = resolveRuntimePaths(scheduleRuntime);
+  await getDesktopSettings({ runtime: scheduleRuntime });
+  const legacyScheduleRaw = await rawConfig(scheduleRuntime);
+  legacyScheduleRaw.schedule = { fullIntervalDays: 12, retainedScheduleChoice: 'preserve-me' };
+  const legacyScheduleBytes = `${JSON.stringify(legacyScheduleRaw, null, 2)}\n`;
+  await fs.writeFile(schedulePaths.configFile, legacyScheduleBytes);
+  const legacyScheduleSettings = await getDesktopSettings({ runtime: scheduleRuntime });
+  assert.deepEqual(legacyScheduleSettings.schedule, { enabled: false, intervalHours: 6, fullIntervalDays: 12 });
+  assert.equal(await fs.readFile(schedulePaths.configFile, 'utf8'), legacyScheduleBytes, 'legacy schedule reads must not rewrite config');
+
+  const invalidSchedule = await saveDesktopSettings(request('https://example.test', legacyScheduleSettings.mirrorDir, {
+    scheduleEnabled: true, intervalHours: 25, fullIntervalDays: 0
+  }), { runtime: scheduleRuntime });
+  assert.equal(errorCode(invalidSchedule, 'invalid-range'), true);
+  assert.equal(await fs.readFile(schedulePaths.configFile, 'utf8'), legacyScheduleBytes, 'invalid schedule must not change config');
+
+  const validSchedule = await saveDesktopSettings(request('https://example.test', legacyScheduleSettings.mirrorDir, {
+    scheduleEnabled: true, intervalHours: 4, fullIntervalDays: 9
+  }), { runtime: scheduleRuntime });
+  assert.equal(validSchedule.ok, true);
+  assert.deepEqual(validSchedule.settings.schedule, { enabled: true, intervalHours: 4, fullIntervalDays: 9 });
+  const validScheduleRaw = await rawConfig(scheduleRuntime);
+  assert.deepEqual(validScheduleRaw.schedule, {
+    fullIntervalDays: 9,
+    retainedScheduleChoice: 'preserve-me',
+    enabled: true,
+    intervalHours: 4
+  });
 
   const genericAutomatic = await saveDesktopSettings(request('https://example.test', initial.mirrorDir, {
     automaticLoginEnabled: true

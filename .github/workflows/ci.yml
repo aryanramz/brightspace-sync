@@ -54,6 +54,9 @@ jobs:
       - name: Institution authentication security self-test
         run: npm run auth-selftest
 
+      - name: Scheduled sync policy and logging self-test
+        run: npm run schedule-selftest
+
       - name: School indexes self-test
         run: npm run school-indexes-selftest
 
@@ -137,6 +140,9 @@ jobs:
 
       - name: Institution authentication security self-test
         run: npm run auth-selftest
+
+      - name: Scheduled sync policy and logging self-test
+        run: npm run schedule-selftest
 
       - name: Windows environment doctor
         run: npm run doctor

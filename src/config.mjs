@@ -4,6 +4,7 @@ import { ensureDir, exists, writeJsonAtomic } from './utils.mjs';
 import { resolveConfiguredPath, resolveRuntimePaths } from './runtime-paths.mjs';
 import { acquireInitializationLock, initializationLockError } from './init-lock.mjs';
 import { normalizeBrightspaceBaseUrl } from './brightspace-url.mjs';
+import { normalizeScheduleConfig } from './schedule-config.mjs';
 
 export const CURRENT_CONFIG_VERSION = 1;
 
@@ -242,6 +243,7 @@ export async function loadAppConfigUnderLock({ mode, paths }) {
       automaticLoginEnabled: raw.auth?.automaticLoginEnabled === true,
       manualLoginTimeoutMs: Number(raw.auth?.manualLoginTimeoutMs ?? 10 * 60 * 1000)
     },
+    schedule: normalizeScheduleConfig(raw.schedule),
     drivePublish: {
       enabled: raw.drivePublish?.enabled ?? false,
       destination: raw.drivePublish?.destination

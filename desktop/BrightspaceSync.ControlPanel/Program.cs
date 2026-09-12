@@ -9,6 +9,9 @@ namespace BrightspaceSync.ControlPanel
         [STAThread]
         private static int Main(string[] args)
         {
+            if (IsScheduledRun(args))
+                return ScheduledRunCommand.Run();
+
             if (args.Length == 2 && args[0] == "--self-test")
                 return ControlPanelSelfTest.Run(args[1]);
 
@@ -27,6 +30,12 @@ namespace BrightspaceSync.ControlPanel
                 GC.KeepAlive(singleInstance);
             }
             return 0;
+        }
+
+        internal static bool IsScheduledRun(string[] args)
+        {
+            return args != null && args.Length == 1
+                && String.Equals(args[0], "--scheduled-run", StringComparison.Ordinal);
         }
     }
 }

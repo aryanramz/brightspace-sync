@@ -79,6 +79,13 @@ namespace BrightspaceSync.ControlPanel
         public bool automaticLoginEnabled { get; set; }
     }
 
+    internal sealed class DesktopScheduleSettings
+    {
+        public bool enabled { get; set; }
+        public int intervalHours { get; set; }
+        public int fullIntervalDays { get; set; }
+    }
+
     internal sealed class DesktopSettings
     {
         public int schemaVersion { get; set; }
@@ -89,6 +96,7 @@ namespace BrightspaceSync.ControlPanel
         public bool maySuggestFirstRunMirror { get; set; }
         public DesktopDriveSettings drive { get; set; }
         public DesktopAuthenticationSettings authentication { get; set; }
+        public DesktopScheduleSettings schedule { get; set; }
     }
 
     internal sealed class SettingsSaveRequest
@@ -98,6 +106,7 @@ namespace BrightspaceSync.ControlPanel
         public string mirrorDir { get; set; }
         public DesktopDriveSettings drive { get; set; }
         public DesktopAuthenticationSettings authentication { get; set; }
+        public DesktopScheduleSettings schedule { get; set; }
         public string mirrorAction { get; set; }
     }
 
@@ -180,6 +189,7 @@ namespace BrightspaceSync.ControlPanel
         Task<SettingsSaveResponse> SaveSettingsAsync(SettingsSaveRequest request);
         Task<BackendProcessResult> RunSyncAsync(string mode);
         Task<BackendProcessResult> RunRefreshLoginAsync();
+        Task<BackendProcessResult> RunScheduledAsync();
     }
 
     internal sealed class BackendClient : IDesktopBackendClient
@@ -347,6 +357,11 @@ namespace BrightspaceSync.ControlPanel
             return RunAsync("refresh-login");
         }
 
+        public Task<BackendProcessResult> RunScheduledAsync()
+        {
+            return RunAsync("scheduled");
+        }
+
         private T DeserializeResponse<T>(string standardOutput, string label)
         {
             try
@@ -363,8 +378,11 @@ namespace BrightspaceSync.ControlPanel
         {
             if (settings == null || settings.schemaVersion != SupportedStatusSchemaVersion)
                 throw new InvalidDataException("The Brightspace Sync backend settings schema is not supported.");
-            if (String.IsNullOrWhiteSpace(settings.mirrorDir) || settings.drive == null || settings.authentication == null)
+            if (String.IsNullOrWhiteSpace(settings.mirrorDir) || settings.drive == null || settings.authentication == null || settings.schedule == null)
                 throw new InvalidDataException("The Brightspace Sync backend settings response is incomplete.");
+            if (settings.schedule.intervalHours < 1 || settings.schedule.intervalHours > 24
+                || settings.schedule.fullIntervalDays < 1 || settings.schedule.fullIntervalDays > 30)
+                throw new InvalidDataException("The Brightspace Sync backend returned invalid scheduling settings.");
         }
 
         internal static string LastNonEmptyLine(string value)

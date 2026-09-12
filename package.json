@@ -21,6 +21,7 @@
     "history-security-selftest": "node src/history-security-selftest.mjs",
     "windows-browser-smoke": "node src/windows-browser-smoke.mjs",
     "scheduled": "node src/launcher.mjs scheduled",
+    "schedule-selftest": "node src/schedule-selftest.mjs",
     "setup-login": "node src/launcher.mjs setup-login",
     "runtime-paths-selftest": "node src/runtime-paths-selftest.mjs",
     "runtime-foundation-selftest": "node src/runtime-foundation-selftest.mjs",

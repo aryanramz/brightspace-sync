@@ -1,10 +1,10 @@
 import { institutionAdapterForBaseUrl } from './auth-adapters.mjs';
 
-export function buildSyncBrowserLaunchOptions(config, executablePath) {
+export function buildSyncBrowserLaunchOptions(config, executablePath, { scheduledRun = false } = {}) {
   const automaticInstitutionLogin = Boolean(
     config.auth?.automaticLoginEnabled && institutionAdapterForBaseUrl(config.baseUrl)
   );
-  const startMinimized = Boolean(config.headless) || automaticInstitutionLogin;
+  const startMinimized = scheduledRun || Boolean(config.headless) || automaticInstitutionLogin;
   return {
     executablePath,
     // A real window must exist so manual login or MFA can be brought forward.

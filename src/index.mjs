@@ -61,7 +61,7 @@ function termDisplay(terms) {
   return terms?.length ? terms.map(t => t.label).join(', ') : '(none)';
 }
 
-async function runSync(mode, config) {
+async function runSync(mode, config, { scheduledRun = false } = {}) {
   if (!config.baseUrl) throw new Error(`baseUrl is missing from ${config.configFile}.`);
   await ensureDir(config.outputDir);
   await ensureDir(config.profileDir);
@@ -103,7 +103,7 @@ async function runSync(mode, config) {
 
   const context = await chromium.launchPersistentContext(
     config.profileDir,
-    buildSyncBrowserLaunchOptions(config, browser.path)
+    buildSyncBrowserLaunchOptions(config, browser.path, { scheduledRun })
   );
 
   await new Promise(resolve => setTimeout(resolve, 700));
@@ -281,6 +281,7 @@ async function runSync(mode, config) {
 
 async function main() {
   const mode = requestedMode();
+  const scheduledRun = process.argv.includes('--scheduled-run');
   const { config, paths, migrations } = await loadAppConfig({ mode });
   if (migrations.length) console.log(`Runtime data migration: ${migrations.length} action(s) applied.`);
   await ensureDir(paths.lockDir);
@@ -289,6 +290,7 @@ async function main() {
     console.log(`Brightspace Sync v${APP_VERSION} — ${mode.toUpperCase()} mode`);
     console.log(`Another Brightspace operation is already running: ${describeActiveLock(lock)}.`);
     console.log('This run was skipped to protect the mirror from overlapping writes.');
+    if (scheduledRun) process.exitCode = 3;
     return;
   }
 
@@ -300,7 +302,7 @@ async function main() {
   process.once('SIGTERM', () => { void releaseAndExit(143); });
 
   try {
-    await runSync(mode, config);
+    await runSync(mode, config, { scheduledRun });
   } finally {
     await lock.release();
   }

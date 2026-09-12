@@ -16,7 +16,9 @@ const SOURCE_FILES = [
   'FolderPicker.cs',
   'MainForm.cs',
   'Program.cs',
+  'ScheduledRunCommand.cs',
   'SetupSettingsForm.cs',
+  'WindowsTaskScheduler.cs',
   path.join('..', 'Shared', 'WindowsCredentialStore.cs'),
   path.join('Properties', 'AssemblyInfo.cs')
 ];
@@ -78,7 +80,7 @@ async function build() {
   await fs.rm(OUTPUT_DIR, { recursive: true, force: true });
   await fs.mkdir(OUTPUT_DIR, { recursive: true });
 
-  const references = ['System.dll', 'System.Core.dll', 'System.Drawing.dll', 'System.Web.Extensions.dll', 'System.Windows.Forms.dll']
+  const references = ['System.dll', 'System.Core.dll', 'System.Drawing.dll', 'System.Web.Extensions.dll', 'System.Windows.Forms.dll', 'Microsoft.CSharp.dll']
     .map(name => `/reference:${path.join(frameworkDir, name)}`);
   await run(compiler, [
     '/nologo',

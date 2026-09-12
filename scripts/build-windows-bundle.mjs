@@ -40,6 +40,7 @@ const RUNTIME_SOURCE_FILES = [
   'publish.mjs',
   'refresh-login.mjs',
   'runtime-paths.mjs',
+  'schedule-config.mjs',
   'scheduled.mjs',
   'school-indexes.mjs',
   'status.mjs',
@@ -256,7 +257,7 @@ async function build() {
       credentialHelper: 'Brightspace Sync Credential Helper.exe',
       desktop: {
         technology: '.NET Framework 4.8 WinForms',
-        backendContract: 'status/settings JSON over stdout; settings save JSON over stdin; credentials via private named pipe',
+        backendContract: 'status/settings JSON over stdout; settings save JSON over stdin; credentials via private named pipe; scheduled sync via fixed hidden entry point',
         backendSchemaVersion: 1
       },
       applicationRoot: 'app',

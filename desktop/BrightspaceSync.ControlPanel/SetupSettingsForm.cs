@@ -18,7 +18,9 @@ namespace BrightspaceSync.ControlPanel
         public async Task<bool> ShowAsync(IWin32Window owner, IDesktopBackendClient backend, bool firstRun)
         {
             DesktopSettings settings = await backend.GetSettingsAsync();
-            using (var form = new SetupSettingsForm(backend, settings, firstRun, new WindowsFolderPicker(), new WindowsCredentialStore()))
+            using (var form = new SetupSettingsForm(
+                backend, settings, firstRun, new WindowsFolderPicker(),
+                new WindowsCredentialStore(), new WindowsTaskSchedulerService()))
                 return form.ShowDialog(owner) == DialogResult.OK;
         }
     }
@@ -28,6 +30,7 @@ namespace BrightspaceSync.ControlPanel
         private readonly IDesktopBackendClient _backend;
         private readonly IFolderPicker _folderPicker;
         private readonly ICredentialStore _credentialStore;
+        private readonly ITaskSchedulerService _taskScheduler;
         private readonly TextBox _baseUrl = new TextBox();
         private readonly TextBox _mirrorDir = new TextBox();
         private readonly CheckBox _driveEnabled = new CheckBox();
@@ -39,6 +42,11 @@ namespace BrightspaceSync.ControlPanel
         private readonly Label _validation = new Label();
         private readonly GroupBox _authenticationGroup = new GroupBox();
         private readonly GroupBox _driveGroup = new GroupBox();
+        private readonly GroupBox _scheduleGroup = new GroupBox();
+        private readonly CheckBox _scheduleEnabled = new CheckBox();
+        private readonly NumericUpDown _intervalHours = new NumericUpDown();
+        private readonly NumericUpDown _fullIntervalDays = new NumericUpDown();
+        private readonly Label _scheduleHint = new Label();
         private readonly CheckBox _automaticLoginEnabled = new CheckBox();
         private readonly TextBox _username = new TextBox();
         private readonly TextBox _password = new TextBox();
@@ -53,11 +61,22 @@ namespace BrightspaceSync.ControlPanel
         private bool _saving;
 
         internal SetupSettingsForm(IDesktopBackendClient backend, DesktopSettings settings, bool firstRun, IFolderPicker folderPicker)
-            : this(backend, settings, firstRun, folderPicker, new WindowsCredentialStore())
+            : this(backend, settings, firstRun, folderPicker, new WindowsCredentialStore(), new PassiveTaskSchedulerService())
         {
         }
 
         internal SetupSettingsForm(IDesktopBackendClient backend, DesktopSettings settings, bool firstRun, IFolderPicker folderPicker, ICredentialStore credentialStore)
+            : this(backend, settings, firstRun, folderPicker, credentialStore, new PassiveTaskSchedulerService())
+        {
+        }
+
+        internal SetupSettingsForm(
+            IDesktopBackendClient backend,
+            DesktopSettings settings,
+            bool firstRun,
+            IFolderPicker folderPicker,
+            ICredentialStore credentialStore,
+            ITaskSchedulerService taskScheduler)
         {
             if (backend == null) throw new ArgumentNullException("backend");
             if (settings == null) throw new ArgumentNullException("settings");
@@ -65,6 +84,8 @@ namespace BrightspaceSync.ControlPanel
             _folderPicker = folderPicker ?? new WindowsFolderPicker();
             if (credentialStore == null) throw new ArgumentNullException("credentialStore");
             _credentialStore = credentialStore;
+            if (taskScheduler == null) throw new ArgumentNullException("taskScheduler");
+            _taskScheduler = taskScheduler;
             _mirrorOverrideActive = settings.mirrorOverrideActive;
 
             Text = firstRun ? "Set up Brightspace Sync" : "Brightspace Sync Settings";
@@ -148,6 +169,8 @@ namespace BrightspaceSync.ControlPanel
             };
             _driveGroup.Controls.AddRange(new Control[] { _driveEnabled, _driveDestination, _driveBrowse });
 
+            ConfigureScheduleGroup(settings);
+
             _validation.Location = new Point(25, 504);
             _validation.Size = new Size(365, 58);
             _validation.ForeColor = Color.Firebrick;
@@ -177,7 +200,7 @@ namespace BrightspaceSync.ControlPanel
             };
             Controls.AddRange(new Control[] {
                 title, intro, urlLabel, _baseUrl, mirrorLabel, _mirrorDir, _mirrorBrowse,
-                overrideLabel, _authenticationGroup, _driveGroup, _validation, _save, _cancel
+                overrideLabel, _authenticationGroup, _driveGroup, _scheduleGroup, _validation, _save, _cancel
             });
             UpdateDriveControls();
             UpdateAuthenticationControls();
@@ -215,6 +238,15 @@ namespace BrightspaceSync.ControlPanel
         }
 
         internal string ValidationTextForSelfTest { get { return _validation.Text; } }
+
+        internal string ScheduleHintForSelfTest { get { return _scheduleHint.Text; } }
+
+        internal void SetScheduleForSelfTest(bool enabled, int intervalHours, int fullIntervalDays)
+        {
+            _scheduleEnabled.Checked = enabled;
+            _intervalHours.Value = intervalHours;
+            _fullIntervalDays.Value = fullIntervalDays;
+        }
 
         internal Task<bool> SaveForSelfTestAsync(string mirrorAction)
         {
@@ -327,10 +359,12 @@ namespace BrightspaceSync.ControlPanel
         private void ApplyAuthenticationLayout(bool supported)
         {
             int driveTop = supported ? 389 : 229;
-            int validationTop = supported ? 504 : 344;
-            int buttonTop = supported ? 529 : 359;
-            int clientHeight = supported ? 585 : 415;
+            int scheduleTop = supported ? 504 : 344;
+            int validationTop = supported ? 643 : 483;
+            int buttonTop = supported ? 672 : 512;
+            int clientHeight = supported ? 728 : 568;
             _driveGroup.Location = new Point(25, driveTop);
+            _scheduleGroup.Location = new Point(25, scheduleTop);
             _validation.Location = new Point(25, validationTop);
             _save.Location = new Point(400, buttonTop);
             _cancel.Location = new Point(487, buttonTop);
@@ -389,6 +423,100 @@ namespace BrightspaceSync.ControlPanel
             _driveBrowse.Enabled = _driveEnabled.Checked;
         }
 
+        private void ConfigureScheduleGroup(DesktopSettings settings)
+        {
+            DesktopScheduleSettings schedule = settings.schedule ?? new DesktopScheduleSettings
+            {
+                enabled = false,
+                intervalHours = 6,
+                fullIntervalDays = 7
+            };
+            _scheduleGroup.Text = "Automatic sync (optional)";
+            _scheduleGroup.Location = new Point(25, 504);
+            _scheduleGroup.Size = new Size(540, 129);
+
+            _scheduleEnabled.AutoSize = true;
+            _scheduleEnabled.Location = new Point(14, 22);
+            _scheduleEnabled.Text = "Run Brightspace Sync automatically while I am signed in";
+            _scheduleEnabled.Checked = schedule.enabled;
+            _scheduleEnabled.CheckedChanged += delegate { UpdateScheduleControls(); };
+
+            var everyLabel = CreateLabel("Run every", 14, 54);
+            _intervalHours.Minimum = 1;
+            _intervalHours.Maximum = 24;
+            _intervalHours.Value = Math.Min(24, Math.Max(1, schedule.intervalHours));
+            _intervalHours.Location = new Point(81, 51);
+            _intervalHours.Size = new Size(55, 24);
+            var hoursLabel = CreateLabel("hour(s)", 143, 54);
+
+            var fullLabel = CreateLabel("Run a Full Sync at least every", 222, 54);
+            _fullIntervalDays.Minimum = 1;
+            _fullIntervalDays.Maximum = 30;
+            _fullIntervalDays.Value = Math.Min(30, Math.Max(1, schedule.fullIntervalDays));
+            _fullIntervalDays.Location = new Point(415, 51);
+            _fullIntervalDays.Size = new Size(50, 24);
+            var daysLabel = CreateLabel("day(s)", 471, 54);
+
+            _scheduleHint.AutoSize = false;
+            _scheduleHint.Location = new Point(14, 84);
+            _scheduleHint.Size = new Size(510, 36);
+            _scheduleHint.ForeColor = SystemColors.GrayText;
+            _scheduleGroup.Controls.AddRange(new Control[] {
+                _scheduleEnabled, everyLabel, _intervalHours, hoursLabel,
+                fullLabel, _fullIntervalDays, daysLabel, _scheduleHint
+            });
+            RefreshScheduleHint(schedule);
+            UpdateScheduleControls();
+        }
+
+        private ScheduledTaskRequest CurrentTaskRequest()
+        {
+            return new ScheduledTaskRequest
+            {
+                Enabled = _scheduleEnabled.Checked,
+                IntervalHours = Decimal.ToInt32(_intervalHours.Value),
+                ExecutablePath = Application.ExecutablePath
+            };
+        }
+
+        private void RefreshScheduleHint(DesktopScheduleSettings schedule)
+        {
+            try
+            {
+                ScheduledTaskStatus status = _taskScheduler.Inspect(new ScheduledTaskRequest
+                {
+                    Enabled = schedule.enabled,
+                    IntervalHours = schedule.intervalHours,
+                    ExecutablePath = Application.ExecutablePath
+                });
+                if (schedule.enabled && !status.Exists)
+                    _scheduleHint.Text = "The Windows scheduled task is missing. Saving will repair it.";
+                else if (status.NeedsRepair || (!schedule.enabled && status.Exists))
+                    _scheduleHint.Text = "The Windows scheduled task does not match these settings. Saving will reconcile it.";
+                else if (schedule.enabled && (status.NextRunTime.HasValue || status.LastRunTime.HasValue))
+                {
+                    string next = status.NextRunTime.HasValue ? status.NextRunTime.Value.ToString("g") : "not currently available";
+                    string last = status.LastRunTime.HasValue
+                        ? status.LastRunTime.Value.ToString("g") + " (result " + status.LastTaskResult + ")"
+                        : "never";
+                    _scheduleHint.Text = "Next: " + next + ".  Last: " + last + ".";
+                }
+                else
+                    _scheduleHint.Text = schedule.enabled ? "Windows scheduling is ready." : "Automatic sync is off by default.";
+            }
+            catch (TaskSchedulerOperationException)
+            {
+                _scheduleHint.Text = "Windows scheduling could not be inspected. Saving will retry safely.";
+            }
+        }
+
+        private void UpdateScheduleControls()
+        {
+            bool enabled = _scheduleEnabled.Checked && !_saving;
+            _intervalHours.Enabled = enabled;
+            _fullIntervalDays.Enabled = enabled;
+        }
+
         private SettingsSaveRequest BuildRequest(string mirrorAction)
         {
             bool supportedAuthentication = SupportsStonyBrookAuthentication(_baseUrl.Text.Trim());
@@ -407,6 +535,12 @@ namespace BrightspaceSync.ControlPanel
                     supported = supportedAuthentication,
                     institution = supportedAuthentication ? "stony-brook" : String.Empty,
                     automaticLoginEnabled = supportedAuthentication && _automaticLoginEnabled.Checked
+                },
+                schedule = new DesktopScheduleSettings
+                {
+                    enabled = _scheduleEnabled.Checked,
+                    intervalHours = Decimal.ToInt32(_intervalHours.Value),
+                    fullIntervalDays = Decimal.ToInt32(_fullIntervalDays.Value)
                 },
                 mirrorAction = mirrorAction
             };
@@ -482,6 +616,37 @@ namespace BrightspaceSync.ControlPanel
             }
         }
 
+        private bool TryRollbackTaskChange(ScheduledTaskSnapshot snapshot, bool mutationAttempted)
+        {
+            if (!mutationAttempted || snapshot == null) return true;
+            try
+            {
+                _taskScheduler.Restore(snapshot);
+                return true;
+            }
+            catch (TaskSchedulerOperationException)
+            {
+                return false;
+            }
+        }
+
+        private bool TryRollbackExternalChanges(
+            CredentialRecord previousCredential,
+            bool credentialChanged,
+            ScheduledTaskSnapshot taskSnapshot,
+            bool taskMutationAttempted)
+        {
+            bool taskRestored = TryRollbackTaskChange(taskSnapshot, taskMutationAttempted);
+            bool credentialRestored = TryRollbackCredentialChange(previousCredential, credentialChanged);
+            if (taskRestored && credentialRestored) return true;
+
+            if (!taskRestored && !credentialRestored)
+                _validation.Text = "Settings were not saved, and Windows could not restore the previous scheduled task or saved sign-in. Both require manual review before retrying.";
+            else if (!taskRestored)
+                _validation.Text = "Settings were not saved, and Windows could not restore the previous scheduled task. Automatic sync requires manual review before retrying.";
+            return false;
+        }
+
         private void CommitCredentialState(SettingsSaveRequest request)
         {
             bool automatic = request.authentication != null && request.authentication.automaticLoginEnabled;
@@ -509,16 +674,22 @@ namespace BrightspaceSync.ControlPanel
             CredentialRecord previousCredential = null;
             bool credentialChanged = false;
             bool backendSaveSucceeded = false;
+            ScheduledTaskSnapshot taskSnapshot = null;
+            bool taskMutationAttempted = false;
             SettingsSaveRequest request = BuildRequest(mirrorAction);
             try
             {
                 if (!TryApplyCredentialChange(request, out previousCredential, out credentialChanged)) return false;
+                taskSnapshot = _taskScheduler.Capture();
+                taskMutationAttempted = true;
+                _taskScheduler.Apply(CurrentTaskRequest());
                 SettingsSaveResponse response = await _backend.SaveSettingsAsync(request);
                 if (response == null) throw new InvalidDataException("The settings backend returned no response.");
                 if (response.ok)
                 {
                     backendSaveSucceeded = true;
                     CommitCredentialState(request);
+                    RefreshScheduleHint(request.schedule);
                     _validation.Text = String.Empty;
                     if (interactive)
                     {
@@ -529,8 +700,9 @@ namespace BrightspaceSync.ControlPanel
                     return true;
                 }
 
-                if (!TryRollbackCredentialChange(previousCredential, credentialChanged)) return false;
+                if (!TryRollbackExternalChanges(previousCredential, credentialChanged, taskSnapshot, taskMutationAttempted)) return false;
                 credentialChanged = false;
+                taskMutationAttempted = false;
 
                 if (interactive && response.relocation != null && response.relocation.required)
                 {
@@ -574,13 +746,19 @@ namespace BrightspaceSync.ControlPanel
             }
             catch (CredentialStoreException)
             {
-                if (!backendSaveSucceeded && !TryRollbackCredentialChange(previousCredential, credentialChanged)) return false;
+                if (!backendSaveSucceeded && !TryRollbackExternalChanges(previousCredential, credentialChanged, taskSnapshot, taskMutationAttempted)) return false;
                 _validation.Text = "Windows could not update the saved sign-in. No settings were saved.";
+                return false;
+            }
+            catch (TaskSchedulerOperationException)
+            {
+                if (!backendSaveSucceeded && !TryRollbackExternalChanges(previousCredential, credentialChanged, taskSnapshot, taskMutationAttempted)) return false;
+                _validation.Text = "Windows could not update automatic sync. No settings were saved.";
                 return false;
             }
             catch (Exception)
             {
-                if (!backendSaveSucceeded && !TryRollbackCredentialChange(previousCredential, credentialChanged)) return false;
+                if (!backendSaveSucceeded && !TryRollbackExternalChanges(previousCredential, credentialChanged, taskSnapshot, taskMutationAttempted)) return false;
                 _validation.Text = "Settings could not be saved. Try again, or open View Logs for diagnostics.";
                 return false;
             }
@@ -606,6 +784,9 @@ namespace BrightspaceSync.ControlPanel
             _username.Enabled = enabled && supportedAuthentication && _automaticLoginEnabled.Checked;
             _password.Enabled = enabled && supportedAuthentication && _automaticLoginEnabled.Checked;
             _removeCredential.Enabled = enabled && supportedAuthentication && _credentialExists && !_deleteCredentialRequested;
+            _scheduleEnabled.Enabled = enabled;
+            _intervalHours.Enabled = enabled && _scheduleEnabled.Checked;
+            _fullIntervalDays.Enabled = enabled && _scheduleEnabled.Checked;
             _save.Enabled = enabled;
             _cancel.Enabled = enabled;
         }
