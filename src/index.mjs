@@ -28,6 +28,12 @@ import { acquireSyncLock, describeActiveLock } from './sync-lock.mjs';
 import { authenticateWithInstitutionAdapter, makeChromiumPageVisible } from './auth-flow.mjs';
 import { buildSyncBrowserLaunchOptions } from './browser-launch-options.mjs';
 import { createWindowsCredentialProvider } from './credential-helper-client.mjs';
+import {
+  AUTH_ATTENTION_EXIT_CODE,
+  isAuthenticationAttentionError,
+  runAndClearAuthAttention,
+  setAuthAttention
+} from './auth-attention.mjs';
 
 const APP_VERSION = '2.4.1';
 
@@ -302,13 +308,33 @@ async function main() {
   process.once('SIGTERM', () => { void releaseAndExit(143); });
 
   try {
-    await runSync(mode, config, { scheduledRun });
+    try {
+      if (scheduledRun) {
+        await runSync(mode, config, { scheduledRun: true });
+      } else {
+        await runAndClearAuthAttention(
+          () => runSync(mode, config, { scheduledRun: false }),
+          paths.stateDir
+        );
+      }
+    } catch (error) {
+      if (scheduledRun && isAuthenticationAttentionError(error)) {
+        await setAuthAttention(paths.stateDir).catch(() => {});
+        process.exitCode = AUTH_ATTENTION_EXIT_CODE;
+        return;
+      }
+      throw error;
+    }
   } finally {
     await lock.release();
   }
 }
 
 main().catch(error => {
-  console.error(`\nERROR: ${error.stack || error.message}`);
+  if (isAuthenticationAttentionError(error)) {
+    console.error('\nERROR: Brightspace authentication requires attention. Use Refresh Login.');
+  } else {
+    console.error(`\nERROR: ${error.stack || error.message}`);
+  }
   process.exitCode = 1;
 });

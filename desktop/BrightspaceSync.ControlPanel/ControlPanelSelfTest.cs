@@ -1,5 +1,6 @@
 using BrightspaceSync.Security;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -407,6 +408,91 @@ namespace BrightspaceSync.ControlPanel
                         && enableScheduler.CurrentRequest.IntervalHours == 4;
                 }
 
+                var optionalUnavailableScheduler = new FakeTaskSchedulerService(null) { FailInspect = true };
+                var optionalUnavailableBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 });
+                bool disabledScheduleDoesNotRequireTaskScheduler;
+                using (var settingsForm = new SetupSettingsForm(
+                    optionalUnavailableBackend, currentSettings, false, new NullFolderPicker(),
+                    new FakeCredentialStore(), optionalUnavailableScheduler))
+                {
+                    bool saved = await settingsForm.SaveForSelfTestAsync(null);
+                    disabledScheduleDoesNotRequireTaskScheduler = saved
+                        && optionalUnavailableBackend.SaveCalls == 1
+                        && optionalUnavailableScheduler.ApplyCalls == 0
+                        && settingsForm.ValidationTextForSelfTest.IndexOf("scheduling is unavailable", StringComparison.OrdinalIgnoreCase) >= 0;
+                }
+
+                var unavailableEnableScheduler = new FakeTaskSchedulerService(null) { FailCapture = true };
+                var unavailableEnableBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 });
+                bool unavailableEnableLeavesConfigDisabled;
+                using (var settingsForm = new SetupSettingsForm(
+                    unavailableEnableBackend, currentSettings, false, new NullFolderPicker(),
+                    new FakeCredentialStore(), unavailableEnableScheduler))
+                {
+                    settingsForm.SetScheduleForSelfTest(true, 5, 7);
+                    bool saved = await settingsForm.SaveForSelfTestAsync(null);
+                    unavailableEnableLeavesConfigDisabled = !saved && unavailableEnableBackend.SaveCalls == 0;
+                }
+
+                var enabledScheduleSettings = new DesktopSettings
+                {
+                    schemaVersion = currentSettings.schemaVersion,
+                    configured = currentSettings.configured,
+                    baseUrl = currentSettings.baseUrl,
+                    mirrorDir = currentSettings.mirrorDir,
+                    mirrorOverrideActive = currentSettings.mirrorOverrideActive,
+                    maySuggestFirstRunMirror = currentSettings.maySuggestFirstRunMirror,
+                    drive = currentSettings.drive,
+                    authentication = currentSettings.authentication,
+                    schedule = new DesktopScheduleSettings { enabled = true, intervalHours = 6, fullIntervalDays = 7 }
+                };
+                var unavailableCadenceScheduler = new FakeTaskSchedulerService("enabled-task") { FailCapture = true };
+                var unavailableCadenceBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 });
+                bool unavailableCadenceChangeFailsSafely;
+                using (var settingsForm = new SetupSettingsForm(
+                    unavailableCadenceBackend, enabledScheduleSettings, false, new NullFolderPicker(),
+                    new FakeCredentialStore(), unavailableCadenceScheduler))
+                {
+                    settingsForm.SetScheduleForSelfTest(true, 3, 7);
+                    bool saved = await settingsForm.SaveForSelfTestAsync(null);
+                    unavailableCadenceChangeFailsSafely = !saved && unavailableCadenceBackend.SaveCalls == 0;
+                }
+
+                var unavailableDisableScheduler = new FakeTaskSchedulerService("enabled-task") { FailCapture = true };
+                var unavailableDisableBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 });
+                bool unavailableDisableCannotAccidentallyEnable;
+                using (var settingsForm = new SetupSettingsForm(
+                    unavailableDisableBackend, enabledScheduleSettings, false, new NullFolderPicker(),
+                    new FakeCredentialStore(), unavailableDisableScheduler))
+                {
+                    settingsForm.SetScheduleForSelfTest(false, 6, 7);
+                    bool saved = await settingsForm.SaveForSelfTestAsync(null);
+                    unavailableDisableCannotAccidentallyEnable = !saved
+                        && unavailableDisableBackend.SaveCalls == 0
+                        && unavailableDisableScheduler.CurrentXml == "enabled-task"
+                        && settingsForm.ValidationTextForSelfTest.IndexOf("previous enabled schedule remains", StringComparison.OrdinalIgnoreCase) >= 0;
+                }
+
+                var laterRepairScheduler = new FakeTaskSchedulerService("stale-disabled-task") { FailInspect = true };
+                var laterRepairBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 });
+                bool laterAvailabilityRepairsStaleTask;
+                using (var settingsForm = new SetupSettingsForm(
+                    laterRepairBackend, currentSettings, false, new NullFolderPicker(),
+                    new FakeCredentialStore(), laterRepairScheduler))
+                {
+                    bool savedWhileUnavailable = await settingsForm.SaveForSelfTestAsync(null);
+                    laterRepairScheduler.FailInspect = false;
+                    using (var retryForm = new SetupSettingsForm(
+                        laterRepairBackend, currentSettings, false, new NullFolderPicker(),
+                        new FakeCredentialStore(), laterRepairScheduler))
+                    {
+                        bool repaired = await retryForm.SaveForSelfTestAsync(null);
+                        laterAvailabilityRepairsStaleTask = savedWhileUnavailable
+                            && repaired
+                            && laterRepairScheduler.CurrentXml == null;
+                    }
+                }
+
                 const string priorTaskDefinition = "prior-exact-task-definition";
                 var rollbackScheduler = new FakeTaskSchedulerService(priorTaskDefinition);
                 var failedScheduleBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 })
@@ -487,11 +573,36 @@ namespace BrightspaceSync.ControlPanel
                         && combinedScheduler.CurrentXml == priorTaskDefinition;
                 }
 
+                const string syntheticSidA = "S-1-5-21-1000000001-1000000002-1000000003-1001";
+                const string syntheticSidB = "S-1-5-21-1000000001-1000000002-1000000003-1002";
+                string syntheticTaskA = WindowsTaskSchedulerService.TaskNameForSid(syntheticSidA);
+                string syntheticTaskB = WindowsTaskSchedulerService.TaskNameForSid(syntheticSidB);
+                var syntheticServiceA = new WindowsTaskSchedulerService(syntheticSidA);
+                var syntheticServiceB = new WindowsTaskSchedulerService(syntheticSidB);
+                var syntheticTaskLibrary = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { syntheticServiceA.ManagedTaskName, "user-a-task" },
+                    { syntheticServiceB.ManagedTaskName, "user-b-task" }
+                };
+                syntheticTaskLibrary[syntheticServiceA.ManagedTaskName] = "user-a-repaired";
+                syntheticTaskLibrary.Remove(syntheticServiceA.ManagedTaskName);
+                bool perUserTaskIdentityIsolated = !String.Equals(syntheticTaskA, syntheticTaskB, StringComparison.OrdinalIgnoreCase)
+                    && syntheticServiceA.ManagedTaskName == syntheticTaskA
+                    && syntheticServiceB.ManagedTaskName == syntheticTaskB
+                    && syntheticServiceA.ManagedTaskName != syntheticServiceB.ManagedTaskName
+                    && !syntheticTaskLibrary.ContainsKey(syntheticServiceA.ManagedTaskName)
+                    && syntheticTaskLibrary[syntheticServiceB.ManagedTaskName] == "user-b-task";
                 bool taskIdentityAndArgumentsAreFixed = WindowsTaskSchedulerService.FolderPath == @"\Brightspace Sync"
-                    && WindowsTaskSchedulerService.TaskName == "Scheduled Sync"
                     && WindowsTaskSchedulerService.TaskArguments == "--scheduled-run"
                     && !WindowsTaskSchedulerService.TaskArguments.Contains("password")
-                    && !WindowsTaskSchedulerService.TaskArguments.Contains("config");
+                    && !WindowsTaskSchedulerService.TaskArguments.Contains("config")
+                    && !WindowsTaskSchedulerService.TaskArguments.Contains(syntheticSidA)
+                    && !WindowsTaskSchedulerService.TaskArguments.Contains(syntheticSidB);
+                bool indefiniteTaskPolicyValidated = WindowsTaskSchedulerService.HasIndefiniteTimePolicy("PT0S", String.Empty, String.Empty)
+                    && WindowsTaskSchedulerService.HasIndefiniteTimePolicy("PT0S", "PT0S", null)
+                    && !WindowsTaskSchedulerService.HasIndefiniteTimePolicy("PT4H", String.Empty, String.Empty)
+                    && !WindowsTaskSchedulerService.HasIndefiniteTimePolicy("PT0S", "P1D", String.Empty)
+                    && !WindowsTaskSchedulerService.HasIndefiniteTimePolicy("PT0S", String.Empty, "2026-09-12T12:00:00");
 
                 var reconcileSettings = new DesktopSettings
                 {
@@ -722,12 +833,19 @@ namespace BrightspaceSync.ControlPanel
                     scheduledEntrypointSelected = scheduledEntrypointSelected,
                     scheduledEntrypointReturnsBackendCode = scheduledEntrypointReturnsBackendCode,
                     scheduleEnableSaved = scheduleEnableSaved,
+                    disabledScheduleDoesNotRequireTaskScheduler = disabledScheduleDoesNotRequireTaskScheduler,
+                    unavailableEnableLeavesConfigDisabled = unavailableEnableLeavesConfigDisabled,
+                    unavailableCadenceChangeFailsSafely = unavailableCadenceChangeFailsSafely,
+                    unavailableDisableCannotAccidentallyEnable = unavailableDisableCannotAccidentallyEnable,
+                    laterAvailabilityRepairsStaleTask = laterAvailabilityRepairsStaleTask,
                     configFailureRestoresExactTask = configFailureRestoresExactTask,
                     taskCreationFailureLeavesConfigDisabled = taskCreationFailureLeavesConfigDisabled,
                     taskRollbackFailureSurfaced = taskRollbackFailureSurfaced,
                     scheduleDisableDeletesExactTask = scheduleDisableDeletesExactTask,
                     combinedCredentialAndTaskRollback = combinedCredentialAndTaskRollback,
+                    perUserTaskIdentityIsolated = perUserTaskIdentityIsolated,
                     taskIdentityAndArgumentsAreFixed = taskIdentityAndArgumentsAreFixed,
+                    indefiniteTaskPolicyValidated = indefiniteTaskPolicyValidated,
                     obsoleteTaskDetectedAndRepaired = obsoleteTaskDetectedAndRepaired,
                     existingPasswordNotRedisplayed = existingPasswordNotRedisplayed,
                     blankPasswordKeepsCredential = blankPasswordKeepsCredential,
@@ -1033,17 +1151,21 @@ namespace BrightspaceSync.ControlPanel
         internal string UnrelatedTask { get; private set; }
         internal ScheduledTaskRequest CurrentRequest { get; private set; }
         internal bool FailApply { get; set; }
+        internal bool FailCapture { get; set; }
+        internal bool FailInspect { get; set; }
         internal bool FailRestore { get; set; }
         internal int ApplyCalls { get; private set; }
         internal int RestoreCalls { get; private set; }
 
         public ScheduledTaskSnapshot Capture()
         {
+            if (FailCapture) throw new TaskSchedulerOperationException("Synthetic Task Scheduler unavailability.");
             return new ScheduledTaskSnapshot { Exists = CurrentXml != null, Xml = CurrentXml };
         }
 
         public ScheduledTaskStatus Inspect(ScheduledTaskRequest expected)
         {
+            if (FailInspect) throw new TaskSchedulerOperationException("Synthetic Task Scheduler unavailability.");
             bool exists = CurrentXml != null;
             bool matches = !expected.Enabled ? !exists : exists && CurrentRequest != null
                 && CurrentRequest.Enabled

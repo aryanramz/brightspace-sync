@@ -9,6 +9,7 @@ import { CURRENT_CONFIG_VERSION, loadAppConfig } from './config.mjs';
 import { canonicalFilesystemPath, getDesktopSettings, saveDesktopSettings } from './desktop-settings.mjs';
 import { resolveRuntimePaths } from './runtime-paths.mjs';
 import { acquireSyncLock } from './sync-lock.mjs';
+import { hasAuthAttention, setAuthAttention } from './auth-attention.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -47,6 +48,7 @@ function request(baseUrl, mirrorDir, {
   driveDestination = '',
   mirrorAction = '',
   automaticLoginEnabled = false,
+  authenticationRetryRequested = false,
   scheduleEnabled = false,
   intervalHours = 6,
   fullIntervalDays = 7
@@ -56,7 +58,7 @@ function request(baseUrl, mirrorDir, {
     baseUrl,
     mirrorDir,
     drive: { enabled: driveEnabled, destination: driveDestination },
-    authentication: { automaticLoginEnabled },
+    authentication: { automaticLoginEnabled, retryRequested: authenticationRetryRequested },
     schedule: { enabled: scheduleEnabled, intervalHours, fullIntervalDays },
     ...(mirrorAction ? { mirrorAction } : {})
   };
@@ -231,6 +233,17 @@ try {
   assert.deepEqual(Object.keys(stonyBrookRaw.auth).filter(key => key.toLowerCase().includes('user') || key.toLowerCase().includes('pass')), []);
   assert.equal(JSON.stringify(stonyBrookSaved).toLowerCase().includes('password'), false, 'settings response must never expose a password field');
   assert.equal(JSON.stringify(stonyBrookSaved).toLowerCase().includes('username'), false, 'settings response must never expose a username field');
+
+  const stonyBrookPaths = resolveRuntimePaths(stonyBrookRuntime);
+  await setAuthAttention(stonyBrookPaths.stateDir);
+  const credentialRetrySaved = await saveDesktopSettings(request(
+    'https://mycourses.stonybrook.edu',
+    stonyBrookSaved.settings.mirrorDir,
+    { automaticLoginEnabled: true, authenticationRetryRequested: true }
+  ), { runtime: stonyBrookRuntime });
+  assert.equal(credentialRetrySaved.ok, true);
+  assert.equal(await hasAuthAttention(stonyBrookPaths.stateDir), false, 'intentional credential/authentication update must clear auth attention');
+  assert.equal(Object.hasOwn((await rawConfig(stonyBrookRuntime)).auth, 'retryRequested'), false, 'retry signal must never be persisted');
 
   const unsafeReadCases = [
     {

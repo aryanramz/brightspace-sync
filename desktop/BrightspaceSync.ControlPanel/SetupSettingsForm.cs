@@ -59,6 +59,7 @@ namespace BrightspaceSync.ControlPanel
         private bool _credentialInspectionFailed;
         private bool _deleteCredentialRequested;
         private bool _saving;
+        private DesktopScheduleSettings _committedSchedule;
 
         internal SetupSettingsForm(IDesktopBackendClient backend, DesktopSettings settings, bool firstRun, IFolderPicker folderPicker)
             : this(backend, settings, firstRun, folderPicker, new WindowsCredentialStore(), new PassiveTaskSchedulerService())
@@ -87,6 +88,7 @@ namespace BrightspaceSync.ControlPanel
             if (taskScheduler == null) throw new ArgumentNullException("taskScheduler");
             _taskScheduler = taskScheduler;
             _mirrorOverrideActive = settings.mirrorOverrideActive;
+            _committedSchedule = CopySchedule(settings.schedule);
 
             Text = firstRun ? "Set up Brightspace Sync" : "Brightspace Sync Settings";
             StartPosition = FormStartPosition.CenterParent;
@@ -425,12 +427,7 @@ namespace BrightspaceSync.ControlPanel
 
         private void ConfigureScheduleGroup(DesktopSettings settings)
         {
-            DesktopScheduleSettings schedule = settings.schedule ?? new DesktopScheduleSettings
-            {
-                enabled = false,
-                intervalHours = 6,
-                fullIntervalDays = 7
-            };
+            DesktopScheduleSettings schedule = _committedSchedule;
             _scheduleGroup.Text = "Automatic sync (optional)";
             _scheduleGroup.Location = new Point(25, 504);
             _scheduleGroup.Size = new Size(540, 129);
@@ -477,6 +474,49 @@ namespace BrightspaceSync.ControlPanel
                 IntervalHours = Decimal.ToInt32(_intervalHours.Value),
                 ExecutablePath = Application.ExecutablePath
             };
+        }
+
+        private static DesktopScheduleSettings CopySchedule(DesktopScheduleSettings schedule)
+        {
+            schedule = schedule ?? new DesktopScheduleSettings
+            {
+                enabled = false,
+                intervalHours = 6,
+                fullIntervalDays = 7
+            };
+            return new DesktopScheduleSettings
+            {
+                enabled = schedule.enabled,
+                intervalHours = schedule.intervalHours,
+                fullIntervalDays = schedule.fullIntervalDays
+            };
+        }
+
+        private string TryReconcileOptionalDisabledTask(
+            out ScheduledTaskSnapshot snapshot,
+            out bool mutationAttempted)
+        {
+            snapshot = null;
+            mutationAttempted = false;
+            ScheduledTaskRequest request = CurrentTaskRequest();
+            try
+            {
+                ScheduledTaskStatus status = _taskScheduler.Inspect(request);
+                if (!status.Exists) return null;
+                snapshot = _taskScheduler.Capture();
+                mutationAttempted = true;
+                _taskScheduler.Apply(request);
+                return null;
+            }
+            catch (TaskSchedulerOperationException)
+            {
+                bool restored = TryRollbackTaskChange(snapshot, mutationAttempted);
+                snapshot = null;
+                mutationAttempted = false;
+                return restored
+                    ? "Settings can be saved, but Windows scheduling is unavailable. Automatic sync remains off; reopen Settings later to reconcile any stale scheduled task."
+                    : "Settings can be saved with automatic sync off, but Windows could not restore or reconcile the stale scheduled task. Manual scheduling review is required.";
+            }
         }
 
         private void RefreshScheduleHint(DesktopScheduleSettings schedule)
@@ -677,20 +717,49 @@ namespace BrightspaceSync.ControlPanel
             ScheduledTaskSnapshot taskSnapshot = null;
             bool taskMutationAttempted = false;
             SettingsSaveRequest request = BuildRequest(mirrorAction);
+            string schedulingWarning = null;
             try
             {
                 if (!TryApplyCredentialChange(request, out previousCredential, out credentialChanged)) return false;
-                taskSnapshot = _taskScheduler.Capture();
-                taskMutationAttempted = true;
-                _taskScheduler.Apply(CurrentTaskRequest());
+                request.authentication.retryRequested = credentialChanged;
+                bool schedulerRequired = _committedSchedule.enabled || request.schedule.enabled;
+                if (schedulerRequired)
+                {
+                    taskSnapshot = _taskScheduler.Capture();
+                    taskMutationAttempted = true;
+                    _taskScheduler.Apply(CurrentTaskRequest());
+                }
+                else
+                {
+                    schedulingWarning = TryReconcileOptionalDisabledTask(
+                        out taskSnapshot, out taskMutationAttempted);
+                }
                 SettingsSaveResponse response = await _backend.SaveSettingsAsync(request);
                 if (response == null) throw new InvalidDataException("The settings backend returned no response.");
                 if (response.ok)
                 {
                     backendSaveSucceeded = true;
                     CommitCredentialState(request);
+                    _committedSchedule = CopySchedule(request.schedule);
                     RefreshScheduleHint(request.schedule);
-                    _validation.Text = String.Empty;
+                    if (!String.IsNullOrWhiteSpace(schedulingWarning))
+                    {
+                        _scheduleHint.Text = schedulingWarning;
+                        _validation.Text = schedulingWarning;
+                        if (interactive)
+                        {
+                            MessageBox.Show(
+                                this,
+                                schedulingWarning,
+                                "Automatic sync requires review",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Warning);
+                        }
+                    }
+                    else
+                    {
+                        _validation.Text = String.Empty;
+                    }
                     if (interactive)
                     {
                         _saving = false;
@@ -753,7 +822,9 @@ namespace BrightspaceSync.ControlPanel
             catch (TaskSchedulerOperationException)
             {
                 if (!backendSaveSucceeded && !TryRollbackExternalChanges(previousCredential, credentialChanged, taskSnapshot, taskMutationAttempted)) return false;
-                _validation.Text = "Windows could not update automatic sync. No settings were saved.";
+                _validation.Text = _committedSchedule.enabled && !request.schedule.enabled
+                    ? "Windows could not disable automatic sync. No settings were saved, so the previous enabled schedule remains in effect."
+                    : "Windows could not update automatic sync. No settings were saved.";
                 return false;
             }
             catch (Exception)

@@ -77,6 +77,7 @@ namespace BrightspaceSync.ControlPanel
         public bool supported { get; set; }
         public string institution { get; set; }
         public bool automaticLoginEnabled { get; set; }
+        public bool retryRequested { get; set; }
     }
 
     internal sealed class DesktopScheduleSettings

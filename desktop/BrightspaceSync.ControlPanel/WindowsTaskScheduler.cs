@@ -70,8 +70,10 @@ namespace BrightspaceSync.ControlPanel
     internal sealed class WindowsTaskSchedulerService : ITaskSchedulerService
     {
         internal const string FolderPath = @"\Brightspace Sync";
-        internal const string TaskName = "Scheduled Sync";
         internal const string TaskArguments = "--scheduled-run";
+
+        private readonly string _userSid;
+        private readonly string _taskName;
 
         private const int TaskActionExec = 0;
         private const int TaskTriggerTime = 1;
@@ -86,6 +88,34 @@ namespace BrightspaceSync.ControlPanel
             [Out] StringBuilder path,
             uint pathLength,
             uint flags);
+
+        internal WindowsTaskSchedulerService()
+            : this(CurrentUserSid())
+        {
+        }
+
+        internal WindowsTaskSchedulerService(string userSid)
+        {
+            _userSid = NormalizeSid(userSid);
+            _taskName = TaskNameForSid(_userSid);
+        }
+
+        internal string ManagedTaskName { get { return _taskName; } }
+
+        internal static string TaskNameForSid(string userSid)
+        {
+            return "Scheduled Sync - " + NormalizeSid(userSid);
+        }
+
+        internal static bool HasIndefiniteTimePolicy(
+            string executionTimeLimit,
+            string repetitionDuration,
+            string endBoundary)
+        {
+            return String.Equals((executionTimeLimit ?? String.Empty).Trim(), "PT0S", StringComparison.OrdinalIgnoreCase)
+                && IsIndefiniteDuration(repetitionDuration)
+                && String.IsNullOrWhiteSpace(endBoundary);
+        }
 
         public ScheduledTaskSnapshot Capture()
         {
@@ -134,9 +164,10 @@ namespace BrightspaceSync.ControlPanel
                         {
                             dynamic action = actions.Item(1);
                             dynamic trigger = triggers.Item(1);
+                            dynamic repetition = trigger.Repetition;
                             try
                             {
-                                status.IntervalHours = ParseIntervalHours((string)trigger.Repetition.Interval);
+                                status.IntervalHours = ParseIntervalHours((string)repetition.Interval);
                                 shapeMatches = (int)action.Type == TaskActionExec
                                     && (int)trigger.Type == TaskTriggerTime
                                     && SameExecutable((string)action.Path, expected.ExecutablePath)
@@ -146,16 +177,22 @@ namespace BrightspaceSync.ControlPanel
                                     && (bool)trigger.Enabled
                                     && (int)principal.LogonType == TaskLogonInteractiveToken
                                     && (int)principal.RunLevel == TaskRunLevelLeastPrivilege
-                                    && String.Equals((string)principal.UserId, WindowsIdentity.GetCurrent().Name, StringComparison.OrdinalIgnoreCase)
+                                    && SameUserSid((string)principal.UserId, _userSid)
                                     && (bool)settings.Enabled
                                     && (bool)settings.StartWhenAvailable
                                     && (int)settings.MultipleInstances == TaskInstancesIgnoreNew
                                     && !(bool)settings.WakeToRun
                                     && !(bool)settings.DisallowStartIfOnBatteries
-                                    && !(bool)settings.StopIfGoingOnBatteries;
+                                    && !(bool)settings.StopIfGoingOnBatteries
+                                    && !(bool)repetition.StopAtDurationEnd
+                                    && HasIndefiniteTimePolicy(
+                                        (string)settings.ExecutionTimeLimit,
+                                        (string)repetition.Duration,
+                                        (string)trigger.EndBoundary);
                             }
                             finally
                             {
+                                ReleaseComObject(repetition);
                                 ReleaseComObject(action);
                                 ReleaseComObject(trigger);
                             }
@@ -198,7 +235,7 @@ namespace BrightspaceSync.ControlPanel
                 {
                     if (!request.Enabled)
                     {
-                        folder.DeleteTask(TaskName, 0);
+                        folder.DeleteTask(_taskName, 0);
                         return null;
                     }
 
@@ -206,7 +243,7 @@ namespace BrightspaceSync.ControlPanel
                     try
                     {
                         definition.RegistrationInfo.Description = "Runs Brightspace Sync in the signed-in user's desktop session.";
-                        definition.Principal.UserId = WindowsIdentity.GetCurrent().Name;
+                        definition.Principal.UserId = _userSid;
                         definition.Principal.LogonType = TaskLogonInteractiveToken;
                         definition.Principal.RunLevel = TaskRunLevelLeastPrivilege;
                         definition.Settings.Enabled = true;
@@ -215,7 +252,7 @@ namespace BrightspaceSync.ControlPanel
                         definition.Settings.DisallowStartIfOnBatteries = false;
                         definition.Settings.StopIfGoingOnBatteries = false;
                         definition.Settings.MultipleInstances = TaskInstancesIgnoreNew;
-                        definition.Settings.ExecutionTimeLimit = "PT4H";
+                        definition.Settings.ExecutionTimeLimit = "PT0S";
 
                         dynamic trigger = definition.Triggers.Create(TaskTriggerTime);
                         dynamic action = definition.Actions.Create(TaskActionExec);
@@ -236,8 +273,8 @@ namespace BrightspaceSync.ControlPanel
                         }
 
                         dynamic registered = folder.RegisterTaskDefinition(
-                            TaskName, definition, TaskCreateOrUpdate,
-                            WindowsIdentity.GetCurrent().Name, null,
+                            _taskName, definition, TaskCreateOrUpdate,
+                            _userSid, null,
                             TaskLogonInteractiveToken, null);
                         ReleaseComObject(registered);
                     }
@@ -259,7 +296,7 @@ namespace BrightspaceSync.ControlPanel
                     if (existing == null) return null;
                     ReleaseComObject(existing);
                     dynamic existingFolder = service.GetFolder(FolderPath);
-                    try { existingFolder.DeleteTask(TaskName, 0); }
+                    try { existingFolder.DeleteTask(_taskName, 0); }
                     finally { ReleaseComObject(existingFolder); }
                     return null;
                 }
@@ -270,8 +307,8 @@ namespace BrightspaceSync.ControlPanel
                     if (String.IsNullOrWhiteSpace(snapshot.Xml))
                         throw new TaskSchedulerOperationException("The previous scheduled task snapshot is unavailable.");
                     dynamic restored = folder.RegisterTask(
-                        TaskName, snapshot.Xml, TaskCreateOrUpdate,
-                        WindowsIdentity.GetCurrent().Name, null,
+                        _taskName, snapshot.Xml, TaskCreateOrUpdate,
+                        _userSid, null,
                         TaskLogonInteractiveToken, null);
                     ReleaseComObject(restored);
                     return null;
@@ -309,13 +346,13 @@ namespace BrightspaceSync.ControlPanel
             }
         }
 
-        private static dynamic GetExactTask(dynamic service)
+        private dynamic GetExactTask(dynamic service)
         {
             dynamic folder = null;
             try
             {
                 folder = service.GetFolder(FolderPath);
-                return folder.GetTask(TaskName);
+                return folder.GetTask(_taskName);
             }
             catch (COMException error)
             {
@@ -337,6 +374,52 @@ namespace BrightspaceSync.ControlPanel
                 return 0;
             int value;
             return Int32.TryParse(interval.Substring(2, interval.Length - 3), NumberStyles.None, CultureInfo.InvariantCulture, out value) ? value : 0;
+        }
+
+        private static bool IsIndefiniteDuration(string duration)
+        {
+            return String.IsNullOrWhiteSpace(duration)
+                || String.Equals(duration.Trim(), "PT0S", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string CurrentUserSid()
+        {
+            using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
+            {
+                if (identity.User == null)
+                    throw new TaskSchedulerOperationException("Windows could not determine the current user identity for automatic sync.");
+                return identity.User.Value;
+            }
+        }
+
+        private static string NormalizeSid(string value)
+        {
+            if (String.IsNullOrWhiteSpace(value))
+                throw new ArgumentException("A Windows user SID is required.", "value");
+            try { return new SecurityIdentifier(value.Trim()).Value; }
+            catch (ArgumentException error)
+            {
+                throw new ArgumentException("The Windows user SID is invalid.", "value", error);
+            }
+        }
+
+        private static bool SameUserSid(string principal, string expectedSid)
+        {
+            if (String.IsNullOrWhiteSpace(principal)) return false;
+            try
+            {
+                return String.Equals(new SecurityIdentifier(principal).Value, expectedSid, StringComparison.OrdinalIgnoreCase);
+            }
+            catch (ArgumentException)
+            {
+                try
+                {
+                    var account = new NTAccount(principal);
+                    var sid = (SecurityIdentifier)account.Translate(typeof(SecurityIdentifier));
+                    return String.Equals(sid.Value, expectedSid, StringComparison.OrdinalIgnoreCase);
+                }
+                catch { return false; }
+            }
         }
 
         private static bool SameExecutable(string left, string right)

@@ -10,6 +10,12 @@ import { normalizeScheduleConfig, validateScheduleRequest } from './schedule-con
 import { buildSyncBrowserLaunchOptions } from './browser-launch-options.mjs';
 import { acquireSyncLock } from './sync-lock.mjs';
 import {
+  AUTH_ATTENTION_EXIT_CODE,
+  authAttentionFile,
+  clearAuthAttention,
+  hasAuthAttention
+} from './auth-attention.mjs';
+import {
   SCHEDULED_LOG_MAX_BYTES,
   appendScheduledLog,
   chooseScheduledMode,
@@ -88,6 +94,45 @@ try {
   assert.deepEqual(failedLogEntry, {
     timestamp: new Date(now + 1).toISOString(), mode: 'quick', exitCode: 17, category: 'sync-failed'
   });
+
+  const syntheticAuthMarker = 'synthetic-auth-value-must-not-be-logged';
+  let authLaunches = 0;
+  let credentialReads = 0;
+  const authRequired = await runScheduled({
+    loadConfig,
+    spawnProcess: () => {
+      authLaunches += 1;
+      credentialReads += 1;
+      const child = new EventEmitter();
+      child.standardError = `password=${syntheticAuthMarker}`;
+      queueMicrotask(() => child.emit('exit', AUTH_ATTENTION_EXIT_CODE, null));
+      return child;
+    },
+    now: () => now + 2
+  });
+  assert.equal(authRequired, AUTH_ATTENTION_EXIT_CODE);
+  assert.equal(await hasAuthAttention(stateDir), true, 'authentication failure must set the private attention latch');
+  assert.deepEqual(JSON.parse(await fs.readFile(authAttentionFile(stateDir), 'utf8')), {
+    schemaVersion: 1,
+    required: true
+  });
+  const suppressedRetry = await runScheduled({
+    loadConfig,
+    spawnProcess: () => { throw new Error('latched scheduled run must not launch'); },
+    now: () => now + 3
+  });
+  assert.equal(suppressedRetry, AUTH_ATTENTION_EXIT_CODE);
+  assert.equal(authLaunches, 1, 'latched scheduled run launched a second crawler/browser');
+  assert.equal(credentialReads, 1, 'latched scheduled run caused a second credential read/submission');
+  const authLog = await fs.readFile(path.join(logsDir, 'scheduled.log'), 'utf8');
+  const authEntries = authLog.trim().split(/\r?\n/).slice(-2).map(line => JSON.parse(line));
+  assert.deepEqual(authEntries.map(entry => entry.category), [
+    'refresh-login-required',
+    'refresh-login-required'
+  ]);
+  assert.equal(authLog.includes(syntheticAuthMarker), false);
+  await clearAuthAttention(stateDir);
+  assert.equal(await hasAuthAttention(stateDir), false);
 
   let disabledLaunches = 0;
   const disabled = await runScheduled({

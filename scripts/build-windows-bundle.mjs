@@ -17,6 +17,7 @@ export const BUNDLED_NODE_ARCHIVE_URL = `https://nodejs.org/dist/v${BUNDLED_NODE
 
 const RUNTIME_SOURCE_FILES = [
   'brightspace-url.mjs',
+  'auth-attention.mjs',
   'auth-adapters.mjs',
   'auth-flow.mjs',
   'browser-launch-options.mjs',

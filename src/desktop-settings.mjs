@@ -8,6 +8,7 @@ import { acquireSyncLock } from './sync-lock.mjs';
 import { normalizeBrightspaceBaseUrl } from './brightspace-url.mjs';
 import { institutionAdapterForBaseUrl } from './auth-adapters.mjs';
 import { normalizeScheduleConfig, validateScheduleRequest } from './schedule-config.mjs';
+import { clearAuthAttention } from './auth-attention.mjs';
 
 export const DESKTOP_SETTINGS_SCHEMA_VERSION = 1;
 
@@ -408,6 +409,7 @@ async function validateRequest(request, loaded, io) {
     driveDestination: driveDestination?.physicalPath || '',
     mirrorAction,
     automaticLoginEnabled,
+    authenticationRetryRequested: request?.authentication?.retryRequested === true,
     schedule: requestedSchedule.schedule,
     appRoot: appRoot.physicalPath,
     dataDir: dataDir.physicalPath
@@ -528,6 +530,10 @@ export async function saveDesktopSettings(request, { runtime = {}, fileSystem = 
 
         // The atomic config write is the commit boundary. Nothing below this
         // point may roll the filesystem movement back.
+        if (normalized.authenticationRetryRequested
+          || normalized.automaticLoginEnabled !== Boolean(loaded.config.auth?.automaticLoginEnabled)) {
+          await clearAuthAttention(paths.stateDir).catch(() => {});
+        }
         await movement.commit().catch(() => {});
         const committedConfig = {
           ...loaded.config,

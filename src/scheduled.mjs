@@ -7,11 +7,17 @@ import { fileURLToPath } from 'node:url';
 import { exists } from './utils.mjs';
 import { loadAppConfig } from './config.mjs';
 import { applicationEntry, resolveRuntimePaths } from './runtime-paths.mjs';
+import {
+  AUTH_ATTENTION_EXIT_CODE,
+  hasAuthAttention,
+  setAuthAttention
+} from './auth-attention.mjs';
 
 export const SCHEDULED_LOG_MAX_BYTES = 64 * 1024;
 const SCHEDULED_CATEGORIES = new Set([
   'completed', 'sync-failed', 'operation-active', 'launch-failed',
-  'configuration-error', 'configuration-required', 'disabled'
+  'configuration-error', 'configuration-required', 'disabled',
+  'refresh-login-required'
 ]);
 
 export async function lastFullSync(outputDir, stateDir, io = fs) {
@@ -86,7 +92,9 @@ export async function runScheduled({
   spawnProcess = spawn,
   now = () => Date.now(),
   runtime = {},
-  log = appendScheduledLog
+  log = appendScheduledLog,
+  attentionIsSet = hasAuthAttention,
+  setAttention = setAuthAttention
 } = {}) {
   const fallbackPaths = resolveRuntimePaths(runtime);
   let loaded;
@@ -100,6 +108,7 @@ export async function runScheduled({
   }
 
   const { config, paths } = loaded;
+  const attentionStateDir = config.stateDir || paths.stateDir;
   if (!config.schedule?.enabled) {
     await log(paths.logsDir, {
       timestamp: new Date(now()).toISOString(), mode: null, exitCode: 0, category: 'disabled'
@@ -111,6 +120,13 @@ export async function runScheduled({
       timestamp: new Date(now()).toISOString(), mode: null, exitCode: 2, category: 'configuration-required'
     }).catch(() => {});
     return 2;
+  }
+  if (await attentionIsSet(attentionStateDir)) {
+    await log(paths.logsDir, {
+      timestamp: new Date(now()).toISOString(), mode: null,
+      exitCode: AUTH_ATTENTION_EXIT_CODE, category: 'refresh-login-required'
+    }).catch(() => {});
+    return AUTH_ATTENTION_EXIT_CODE;
   }
 
   const lastFull = await lastFullSync(config.outputDir, config.stateDir);
@@ -128,7 +144,12 @@ export async function runScheduled({
       windowsHide: true
     });
     exitCode = await waitForChild(child);
-    category = exitCode === 0 ? 'completed' : (exitCode === 3 ? 'operation-active' : 'sync-failed');
+    if (exitCode === AUTH_ATTENTION_EXIT_CODE) {
+      category = 'refresh-login-required';
+      await setAttention(attentionStateDir).catch(() => {});
+    } else {
+      category = exitCode === 0 ? 'completed' : (exitCode === 3 ? 'operation-active' : 'sync-failed');
+    }
   } catch {
     exitCode = 1;
   }

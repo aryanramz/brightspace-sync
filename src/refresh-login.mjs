@@ -7,6 +7,7 @@ import { loadAppConfig } from './config.mjs';
 import { findChromiumExecutable } from './browser.mjs';
 import { authenticateWithInstitutionAdapter, makeChromiumPageVisible } from './auth-flow.mjs';
 import { acquireSyncLock, describeActiveLock } from './sync-lock.mjs';
+import { clearAuthAttention } from './auth-attention.mjs';
 
 export async function runRefreshLogin({
   loadConfig = loadAppConfig,
@@ -15,7 +16,8 @@ export async function runRefreshLogin({
   launchPersistentContext = (...args) => chromium.launchPersistentContext(...args),
   authenticate = authenticateWithInstitutionAdapter,
   makeVisible = makeChromiumPageVisible,
-  log = console
+  log = console,
+  clearAttention = clearAuthAttention
 } = {}) {
   const { config, paths } = await loadConfig({ mode: 'full' });
   if (!config.baseUrl) throw new Error('Brightspace is not configured. Open Settings before refreshing login.');
@@ -46,6 +48,7 @@ export async function runRefreshLogin({
         allowAutomatic: false,
         makeVisible: () => makeVisible(context, page)
       });
+      await clearAttention(config.stateDir);
       log.log('Brightspace login refresh completed.');
     } finally {
       await context.close();
