@@ -2,10 +2,13 @@ using System;
 using System.Threading;
 using System.Windows.Forms;
 
-namespace BrightspaceSync.ControlPanel
+namespace CourseMirror.ControlPanel
 {
     internal static class Program
     {
+        internal const string MutexName = @"Local\CourseMirror.ControlPanel";
+        internal const string LegacyMutexName = @"Local\BrightspaceSync.ControlPanel";
+
         [STAThread]
         private static int Main(string[] args)
         {
@@ -16,17 +19,20 @@ namespace BrightspaceSync.ControlPanel
                 return ControlPanelSelfTest.Run(args[1]);
 
             bool ownsMutex;
-            using (var singleInstance = new Mutex(true, @"Local\BrightspaceSync.ControlPanel", out ownsMutex))
+            bool ownsLegacyMutex;
+            using (var singleInstance = new Mutex(true, MutexName, out ownsMutex))
+            using (var legacySingleInstance = new Mutex(true, LegacyMutexName, out ownsLegacyMutex))
             {
-                if (!ownsMutex)
+                if (!ownsMutex || !ownsLegacyMutex)
                 {
-                    MessageBox.Show("Brightspace Sync is already open.", "Brightspace Sync", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show("CourseMirror is already open.", "CourseMirror", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return 0;
                 }
 
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 Application.Run(new MainForm());
+                GC.KeepAlive(legacySingleInstance);
                 GC.KeepAlive(singleInstance);
             }
             return 0;

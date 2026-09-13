@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SOURCE_BUNDLE = path.join(ROOT, 'dist', 'Brightspace Sync');
+const SOURCE_BUNDLE = path.join(ROOT, 'dist', 'CourseMirror');
 const TEXT_EXTENSIONS = new Set(['.cmd', '.config', '.json', '.mjs', '.js', '.cjs', '.txt', '.md', '.xml']);
 
 async function requireFile(file, label) {
@@ -84,7 +84,7 @@ async function assertNoDeveloperPathsOrSensitiveContent(bundleRoot, files) {
       assert.equal(text.toLowerCase().includes(forbidden.toLowerCase()), false, `${relative} contains a developer-machine path.`);
     }
     for (const pattern of secretPatterns) assert.equal(pattern.test(text), false, `${relative} contains sensitive material matching ${pattern}.`);
-    const firstParty = relative === 'Brightspace Sync.cmd'
+    const firstParty = relative === 'CourseMirror.cmd'
       || relative === 'bundle-manifest.json'
       || relative === path.join('app', 'package.json')
       || relative === path.join('app', 'config.example.json')
@@ -112,18 +112,18 @@ const system32 = path.join(systemRoot, 'System32');
 const systemComSpec = path.join(system32, 'cmd.exe');
 const isolatedSystemPath = [system32, systemRoot].join(path.delimiter);
 await requireFile(systemComSpec, 'Windows command processor');
-await requireFile(path.join(SOURCE_BUNDLE, 'Brightspace Sync.cmd'), 'built launcher');
-await requireFile(path.join(SOURCE_BUNDLE, 'Brightspace Sync.exe'), 'compiled Windows control panel');
-await requireFile(path.join(SOURCE_BUNDLE, 'Brightspace Sync.exe.config'), 'Windows control-panel runtime configuration');
-await requireFile(path.join(SOURCE_BUNDLE, 'Brightspace Sync Credential Helper.exe'), 'Windows credential helper');
-await requireFile(path.join(SOURCE_BUNDLE, 'Brightspace Sync Credential Helper.exe.config'), 'Windows credential-helper runtime configuration');
+await requireFile(path.join(SOURCE_BUNDLE, 'CourseMirror.cmd'), 'built launcher');
+await requireFile(path.join(SOURCE_BUNDLE, 'CourseMirror.exe'), 'compiled Windows control panel');
+await requireFile(path.join(SOURCE_BUNDLE, 'CourseMirror.exe.config'), 'Windows control-panel runtime configuration');
+await requireFile(path.join(SOURCE_BUNDLE, 'CourseMirror Credential Helper.exe'), 'Windows credential helper');
+await requireFile(path.join(SOURCE_BUNDLE, 'CourseMirror Credential Helper.exe.config'), 'Windows credential-helper runtime configuration');
 await requireFile(path.join(SOURCE_BUNDLE, 'runtime', 'node.exe'), 'private Node.js runtime');
 await requireFile(path.join(SOURCE_BUNDLE, 'app', 'src', 'launcher.mjs'), 'packaged application launcher');
 await requireFile(path.join(SOURCE_BUNDLE, 'app', 'node_modules', 'playwright', 'package.json'), 'packaged Playwright dependency');
 
-const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'brightspace-windows-bundle-selftest-'));
+const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'coursemirror-windows-bundle-selftest-'));
 try {
-  const portableRoot = path.join(temp, 'copied-portable-bundle', 'Brightspace Sync');
+  const portableRoot = path.join(temp, 'copied portable bundle', 'CourseMirror');
   const unrelatedCwd = path.join(temp, 'unrelated-working-directory');
   const userHome = path.join(temp, 'isolated-user');
   const dataDir = path.join(temp, 'isolated-runtime-data');
@@ -138,14 +138,28 @@ try {
   await fs.cp(SOURCE_BUNDLE, portableRoot, { recursive: true });
 
   const privateNode = path.join(portableRoot, 'runtime', 'node.exe');
-  const controlPanel = path.join(portableRoot, 'Brightspace Sync.exe');
-  const credentialHelper = path.join(portableRoot, 'Brightspace Sync Credential Helper.exe');
-  const launcher = path.join(portableRoot, 'Brightspace Sync.cmd');
+  const controlPanel = path.join(portableRoot, 'CourseMirror.exe');
+  const credentialHelper = path.join(portableRoot, 'CourseMirror Credential Helper.exe');
+  const launcher = path.join(portableRoot, 'CourseMirror.cmd');
   const appRoot = path.join(portableRoot, 'app');
   const manifest = JSON.parse(await fs.readFile(path.join(portableRoot, 'bundle-manifest.json'), 'utf8'));
-  assert.equal(manifest.entrypoint, 'Brightspace Sync.cmd', 'Milestone 2A command-line entrypoint must remain compatible');
-  assert.equal(manifest.desktopEntrypoint, 'Brightspace Sync.exe');
-  assert.equal(manifest.credentialHelper, 'Brightspace Sync Credential Helper.exe');
+  const packagedApplication = JSON.parse(await fs.readFile(path.join(appRoot, 'package.json'), 'utf8'));
+  assert.equal(manifest.entrypoint, 'CourseMirror.cmd', 'Milestone 2A command-line entrypoint must remain compatible');
+  assert.equal(manifest.desktopEntrypoint, 'CourseMirror.exe');
+  assert.equal(manifest.credentialHelper, 'CourseMirror Credential Helper.exe');
+  assert.deepEqual(manifest.application, {
+    name: 'CourseMirror',
+    packageName: 'coursemirror',
+    version: '2.4.1',
+    publisher: 'aryanramz',
+    repository: 'https://github.com/aryanramz/coursemirror'
+  });
+  assert.equal(packagedApplication.name, 'coursemirror');
+  assert.equal(packagedApplication.version, '2.4.1');
+  assert.equal(packagedApplication.author, 'aryanramz');
+  assert.equal(packagedApplication.repository?.url, 'https://github.com/aryanramz/coursemirror.git');
+  assert.equal(packagedApplication.homepage, 'https://github.com/aryanramz/coursemirror#readme');
+  assert.equal(packagedApplication.bugs, 'https://github.com/aryanramz/coursemirror/issues');
   assert.equal(manifest.desktop?.technology, '.NET Framework 4.8 WinForms');
   assert.equal(manifest.desktop?.backendSchemaVersion, 1);
   const isolatedEnv = {
@@ -153,8 +167,8 @@ try {
     PATH: isolatedSystemPath,
     USERPROFILE: userHome,
     LOCALAPPDATA: path.join(userHome, 'AppData', 'Local'),
-    BRIGHTSPACE_SYNC_DATA_DIR: dataDir,
-    BRIGHTSPACE_SYNC_MIRROR_DIR: mirrorDir,
+    COURSEMIRROR_DATA_DIR: dataDir,
+    COURSEMIRROR_MIRROR_DIR: mirrorDir,
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1',
     TEMP: browserTempDir,
     TMP: browserTempDir
@@ -162,8 +176,8 @@ try {
   const browserEnv = {
     ...process.env,
     PATH: isolatedSystemPath,
-    BRIGHTSPACE_SYNC_DATA_DIR: dataDir,
-    BRIGHTSPACE_SYNC_MIRROR_DIR: mirrorDir,
+    COURSEMIRROR_DATA_DIR: dataDir,
+    COURSEMIRROR_MIRROR_DIR: mirrorDir,
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
   };
 
@@ -172,8 +186,8 @@ try {
   assert.equal(browserEnv.LOCALAPPDATA, process.env.LOCALAPPDATA);
   if (process.env.TEMP !== undefined) assert.equal(browserEnv.TEMP, process.env.TEMP);
   if (process.env.TMP !== undefined) assert.equal(browserEnv.TMP, process.env.TMP);
-  assert.equal(browserEnv.BRIGHTSPACE_SYNC_DATA_DIR, dataDir);
-  assert.equal(browserEnv.BRIGHTSPACE_SYNC_MIRROR_DIR, mirrorDir);
+  assert.equal(browserEnv.COURSEMIRROR_DATA_DIR, dataDir);
+  assert.equal(browserEnv.COURSEMIRROR_MIRROR_DIR, mirrorDir);
   assert.equal(browserEnv.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD, '1');
 
   const pathNode = await run(systemComSpec, ['/d', '/s', '/c', 'node --version'], {
@@ -206,14 +220,14 @@ try {
   assert.equal(privateVersion.stdout.trim(), `v${manifest.runtime.version}`);
 
   const dependencyProbe = [
-    "const resolved = require.resolve('playwright', { paths: [process.env.BRIGHTSPACE_SYNC_PACKAGED_APP] });",
+    "const resolved = require.resolve('playwright', { paths: [process.env.COURSEMIRROR_PACKAGED_APP] });",
     "const playwright = require(resolved);",
     "if (!playwright.chromium) throw new Error('Playwright chromium API is unavailable');",
     'console.log(resolved);'
   ].join(' ');
   const dependency = await run(privateNode, ['-e', dependencyProbe], {
     cwd: unrelatedCwd,
-    env: { ...isolatedEnv, BRIGHTSPACE_SYNC_PACKAGED_APP: appRoot },
+    env: { ...isolatedEnv, COURSEMIRROR_PACKAGED_APP: appRoot },
     label: 'packaged production dependency probe'
   });
   assert.equal(dependency.code, 0, dependency.stderr);
@@ -230,23 +244,24 @@ try {
   assert.deepEqual(JSON.parse(await fs.readFile(credentialHelperSelfTestFile, 'utf8')), {
     schemaVersion: 1,
     pipeTransport: true,
-    credentialTargetStable: true
+    credentialTargetStable: true,
+    legacyCredentialTargetCompatible: true
   });
   assert.deepEqual(await snapshotTree(portableRoot), before, 'credential-helper smoke test must not modify the application bundle');
   const credentialTransportProbe = [
     "import { pathToFileURL } from 'node:url';",
-    'const client = await import(pathToFileURL(process.env.BRIGHTSPACE_SYNC_CREDENTIAL_CLIENT).href);',
-    'const adapter = await import(pathToFileURL(process.env.BRIGHTSPACE_SYNC_AUTH_ADAPTER).href);',
-    "const response = await client.requestCredentialHelper('probe', adapter.STONY_BROOK_CREDENTIAL_TARGET, { appRoot: process.env.BRIGHTSPACE_SYNC_PACKAGED_APP });",
+    'const client = await import(pathToFileURL(process.env.COURSEMIRROR_CREDENTIAL_CLIENT).href);',
+    'const adapter = await import(pathToFileURL(process.env.COURSEMIRROR_AUTH_ADAPTER).href);',
+    "const response = await client.requestCredentialHelper('probe', adapter.STONY_BROOK_CREDENTIAL_TARGET, { appRoot: process.env.COURSEMIRROR_PACKAGED_APP });",
     'console.log(JSON.stringify(response));'
   ].join(' ');
   const credentialTransport = await run(privateNode, ['--input-type=module', '-e', credentialTransportProbe], {
     cwd: unrelatedCwd,
     env: {
       ...isolatedEnv,
-      BRIGHTSPACE_SYNC_CREDENTIAL_CLIENT: path.join(appRoot, 'src', 'credential-helper-client.mjs'),
-      BRIGHTSPACE_SYNC_AUTH_ADAPTER: path.join(appRoot, 'src', 'auth-adapters.mjs'),
-      BRIGHTSPACE_SYNC_PACKAGED_APP: appRoot
+      COURSEMIRROR_CREDENTIAL_CLIENT: path.join(appRoot, 'src', 'credential-helper-client.mjs'),
+      COURSEMIRROR_AUTH_ADAPTER: path.join(appRoot, 'src', 'auth-adapters.mjs'),
+      COURSEMIRROR_PACKAGED_APP: appRoot
     },
     label: 'packaged private-Node credential-helper named-pipe probe'
   });
@@ -273,7 +288,7 @@ try {
 
   const controlPanelSelfTestFile = path.join(temp, 'control-panel-self-test.json');
   const controlPanelEnv = { ...isolatedEnv };
-  delete controlPanelEnv.BRIGHTSPACE_SYNC_DEV_BUNDLE_ROOT;
+  delete controlPanelEnv.COURSEMIRROR_DEV_BUNDLE_ROOT;
   const controlPanelSelfTest = await run(controlPanel, ['--self-test', controlPanelSelfTestFile], {
     cwd: unrelatedCwd,
     env: controlPanelEnv,
@@ -287,6 +302,10 @@ try {
   const controlPanelResult = JSON.parse(await fs.readFile(controlPanelSelfTestFile, 'utf8'));
   const packagedLauncherModule = path.join(appRoot, 'src', 'launcher.mjs');
   assert.equal(controlPanelResult.schemaVersion, 1);
+  assert.equal(controlPanelResult.productName, 'CourseMirror');
+  assert.equal(controlPanelResult.executableName, 'CourseMirror.exe');
+  assert.equal(controlPanelResult.mutexName, 'Local\\CourseMirror.ControlPanel');
+  assert.equal(controlPanelResult.legacyMutexCompatibility, true);
   assert.equal(controlPanelResult.applicationRootContainsSpaces, true, 'packaged GUI root must exercise path handling with spaces');
   assert.equal(await canonicalWindowsPath(controlPanelResult.applicationRoot), await canonicalWindowsPath(portableRoot));
   assert.equal(await canonicalWindowsPath(controlPanelResult.nodeExecutable), await canonicalWindowsPath(privateNode));
@@ -353,6 +372,7 @@ try {
   assert.equal(controlPanelResult.combinedCredentialAndTaskRollback, true, 'combined credential and schedule changes must rollback together');
   assert.equal(controlPanelResult.perUserTaskIdentityIsolated, true, 'managed scheduled-task identity must be distinct for each Windows user SID');
   assert.equal(controlPanelResult.taskIdentityAndArgumentsAreFixed, true, 'Task Scheduler identity and command must be fixed');
+  assert.equal(controlPanelResult.legacyCurrentUserTaskReconciled, true, 'the exact legacy current-user task must be reconciled without touching unrelated tasks');
   assert.equal(controlPanelResult.indefiniteTaskPolicyValidated, true, 'finite execution, repetition, and trigger windows must require repair');
   assert.equal(controlPanelResult.obsoleteTaskDetectedAndRepaired, true, 'Settings must detect and reconcile an obsolete managed task');
   assert.equal(controlPanelResult.existingPasswordNotRedisplayed, true);
@@ -368,6 +388,7 @@ try {
   assert.equal(controlPanelResult.credentialFailureIsSafe, true);
   assert.equal(controlPanelResult.passwordClearedAfterSave, true);
   assert.equal(controlPanelResult.genericCredentialFieldsHidden, true);
+  assert.equal(controlPanelResult.legacyCredentialTargetCompatible, true, 'the legacy credential target must remain readable and migrate on replacement');
   assert.equal(controlPanelResult.statusRefreshIntervalMilliseconds, 5000);
   assert.equal(controlPanelResult.initialButtonsEnabled, true, 'configured control panel must initially enable sync buttons');
   assert.equal(controlPanelResult.externalLockStartedDisablesButtons, true, 'an external live lock must disable sync buttons on refresh');
@@ -403,8 +424,8 @@ try {
     cwd: unrelatedCwd,
     env: {
       ...controlPanelEnv,
-      BRIGHTSPACE_SYNC_DATA_DIR: scheduledDataDir,
-      BRIGHTSPACE_SYNC_MIRROR_DIR: scheduledMirrorDir
+      COURSEMIRROR_DATA_DIR: scheduledDataDir,
+      COURSEMIRROR_MIRROR_DIR: scheduledMirrorDir
     },
     label: 'packaged scheduled-run entry point'
   });
@@ -426,10 +447,10 @@ try {
   await requireFile(packagedPlaywrightModule, 'packaged Playwright module');
   const browserLaunchProbe = [
     "import { pathToFileURL } from 'node:url';",
-    "const detector = await import(pathToFileURL(process.env.BRIGHTSPACE_SYNC_PACKAGED_BROWSER_MODULE).href);",
-    "const playwright = await import(pathToFileURL(process.env.BRIGHTSPACE_SYNC_PACKAGED_PLAYWRIGHT_MODULE).href);",
+    "const detector = await import(pathToFileURL(process.env.COURSEMIRROR_PACKAGED_BROWSER_MODULE).href);",
+    "const playwright = await import(pathToFileURL(process.env.COURSEMIRROR_PACKAGED_PLAYWRIGHT_MODULE).href);",
     'const detected = detector.findChromiumExecutable();',
-    'const profileDir = process.env.BRIGHTSPACE_SYNC_BROWSER_PROFILE_DIR;',
+    'const profileDir = process.env.COURSEMIRROR_BROWSER_PROFILE_DIR;',
     'let context;',
     'try {',
     '  context = await playwright.chromium.launchPersistentContext(profileDir, {',
@@ -438,14 +459,14 @@ try {
     "    args: ['--no-first-run', '--no-default-browser-check']",
     '  });',
     '  const page = context.pages()[0] || await context.newPage();',
-    "  await page.goto('data:text/html,<title>Brightspace Sync Bundle Smoke</title><p>ok</p>');",
+    "  await page.goto('data:text/html,<title>CourseMirror Bundle Smoke</title><p>ok</p>');",
     '  const pageTitle = await page.title();',
-    "  if (pageTitle !== 'Brightspace Sync Bundle Smoke') throw new Error(`Unexpected page title: ${pageTitle}`);",
+    "  if (pageTitle !== 'CourseMirror Bundle Smoke') throw new Error(`Unexpected page title: ${pageTitle}`);",
     '  console.log(JSON.stringify({',
     '    browserName: detected.name,',
     '    browserPath: detected.path,',
     '    nodeExecutable: process.execPath,',
-    '    playwrightModule: process.env.BRIGHTSPACE_SYNC_PACKAGED_PLAYWRIGHT_MODULE,',
+    '    playwrightModule: process.env.COURSEMIRROR_PACKAGED_PLAYWRIGHT_MODULE,',
     '    profileDir,',
     '    pageTitle,',
     '    pageUrl: page.url()',
@@ -458,9 +479,9 @@ try {
     cwd: unrelatedCwd,
     env: {
       ...browserEnv,
-      BRIGHTSPACE_SYNC_PACKAGED_BROWSER_MODULE: packagedBrowserModule,
-      BRIGHTSPACE_SYNC_PACKAGED_PLAYWRIGHT_MODULE: packagedPlaywrightModule,
-      BRIGHTSPACE_SYNC_BROWSER_PROFILE_DIR: browserProfileDir
+      COURSEMIRROR_PACKAGED_BROWSER_MODULE: packagedBrowserModule,
+      COURSEMIRROR_PACKAGED_PLAYWRIGHT_MODULE: packagedPlaywrightModule,
+      COURSEMIRROR_BROWSER_PROFILE_DIR: browserProfileDir
     },
     label: 'packaged headless browser launch'
   });
@@ -470,7 +491,7 @@ try {
   assert.equal(await canonicalWindowsPath(browserResult.nodeExecutable), await canonicalWindowsPath(privateNode), 'browser probe must run with packaged private Node');
   assert.equal(await canonicalWindowsPath(browserResult.playwrightModule), await canonicalWindowsPath(packagedPlaywrightModule), 'browser probe must load packaged Playwright');
   assert.equal(await canonicalWindowsPath(browserResult.profileDir), await canonicalWindowsPath(browserProfileDir), 'browser must use the explicit test-owned profile');
-  assert.equal(browserResult.pageTitle, 'Brightspace Sync Bundle Smoke');
+  assert.equal(browserResult.pageTitle, 'CourseMirror Bundle Smoke');
   assert.match(browserResult.pageUrl, /^data:text\/html,/);
   assert.deepEqual(await snapshotTree(portableRoot), before, 'packaged browser launch must not modify the application bundle');
   await fs.rm(browserProfileDir, { recursive: true, force: true });
@@ -492,7 +513,7 @@ try {
     path.join(appRoot, 'BrowserProfile'),
     path.join(appRoot, 'state'),
     path.join(appRoot, 'logs'),
-    path.join(appRoot, 'Brightspace Mirror'),
+    path.join(appRoot, 'CourseMirror'),
     path.join(portableRoot, 'config.json'),
     path.join(portableRoot, 'BrowserProfile'),
     path.join(portableRoot, 'state'),
@@ -500,6 +521,20 @@ try {
   ]) await assert.rejects(fs.access(forbidden), `runtime path must not exist in package: ${forbidden}`);
 
   const packagedFiles = await walkFiles(portableRoot);
+  const legacyBrandingAllowlist = new Set([
+    'app/src/auth-adapters.mjs',
+    'app/src/product-migration.mjs',
+    'app/src/runtime-paths.mjs'
+  ]);
+  for (const relative of packagedFiles.filter(value => value.startsWith(`app${path.sep}src${path.sep}`) || /^(?:bundle-manifest\.json|CourseMirror\.cmd)$/i.test(value))) {
+    const text = await fs.readFile(path.join(portableRoot, relative), 'utf8');
+    if (/Brightspace Sync|BrightspaceSync|brightspace-sync/.test(text)) {
+      const portableName = relative.replaceAll(path.sep, '/');
+      assert.equal(legacyBrandingAllowlist.has(portableName), true, `packaged source retained stale product branding: ${portableName}`);
+    }
+  }
+  const externalServiceSource = await fs.readFile(path.join(appRoot, 'src', 'brightspace-url.mjs'), 'utf8');
+  assert.match(externalServiceSource, /Brightspace/, 'legitimate D2L Brightspace service terminology must remain');
   assert.equal(packagedFiles.some(relative => relative.includes('.local-browsers')), false, 'bundle must not contain Playwright-downloaded browsers');
   assert.equal(packagedFiles.some(relative => /(?:^|[\\/])(?:config\.json|\.env|_sync_state\.json)$/i.test(relative)), false, 'bundle must not contain runtime configuration, secrets, or legacy state');
   assert.equal(packagedFiles.some(relative => /(?:^|[\\/])(?:BrowserProfile|\.brightspace-profile|BrightspaceMirror)(?:[\\/]|$)/i.test(relative)), false, 'bundle must not contain a browser profile or mirror');

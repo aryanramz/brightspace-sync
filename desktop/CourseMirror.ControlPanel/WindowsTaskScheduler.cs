@@ -6,7 +6,7 @@ using System.Security.Principal;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 
-namespace BrightspaceSync.ControlPanel
+namespace CourseMirror.ControlPanel
 {
     internal sealed class ScheduledTaskRequest
     {
@@ -19,6 +19,8 @@ namespace BrightspaceSync.ControlPanel
     {
         internal bool Exists { get; set; }
         internal string Xml { get; set; }
+        internal bool LegacyExists { get; set; }
+        internal string LegacyXml { get; set; }
     }
 
     internal sealed class ScheduledTaskStatus
@@ -69,7 +71,8 @@ namespace BrightspaceSync.ControlPanel
 
     internal sealed class WindowsTaskSchedulerService : ITaskSchedulerService
     {
-        internal const string FolderPath = @"\Brightspace Sync";
+        internal const string FolderPath = @"\CourseMirror";
+        internal const string LegacyFolderPath = @"\Brightspace Sync";
         internal const string TaskArguments = "--scheduled-run";
 
         private readonly string _userSid;
@@ -121,17 +124,27 @@ namespace BrightspaceSync.ControlPanel
         {
             return WithService(delegate(dynamic service)
             {
-                dynamic task = GetExactTask(service);
-                if (task == null) return new ScheduledTaskSnapshot { Exists = false, Xml = null };
+                dynamic task = GetExactTask(service, FolderPath);
+                dynamic legacyTask = GetExactTask(service, LegacyFolderPath);
                 try
                 {
-                    return new ScheduledTaskSnapshot { Exists = true, Xml = (string)task.Xml };
+                    return new ScheduledTaskSnapshot
+                    {
+                        Exists = task != null,
+                        Xml = task == null ? null : (string)task.Xml,
+                        LegacyExists = legacyTask != null,
+                        LegacyXml = legacyTask == null ? null : (string)legacyTask.Xml
+                    };
                 }
                 catch (Exception error)
                 {
-                    throw new TaskSchedulerOperationException("Windows could not snapshot the Brightspace Sync scheduled task.", error);
+                    throw new TaskSchedulerOperationException("Windows could not snapshot the CourseMirror scheduled task.", error);
                 }
-                finally { ReleaseComObject(task); }
+                finally
+                {
+                    ReleaseComObject(legacyTask);
+                    ReleaseComObject(task);
+                }
             });
         }
 
@@ -140,8 +153,19 @@ namespace BrightspaceSync.ControlPanel
             if (expected == null) throw new ArgumentNullException("expected");
             return WithService(delegate(dynamic service)
             {
-                dynamic task = GetExactTask(service);
-                if (task == null) return new ScheduledTaskStatus { Exists = false, MatchesExpected = !expected.Enabled, State = "not-installed" };
+                dynamic task = GetExactTask(service, FolderPath);
+                dynamic legacyTask = GetExactTask(service, LegacyFolderPath);
+                bool legacyExists = legacyTask != null;
+                if (task == null)
+                {
+                    ReleaseComObject(legacyTask);
+                    return new ScheduledTaskStatus
+                    {
+                        Exists = legacyExists,
+                        MatchesExpected = !expected.Enabled && !legacyExists,
+                        State = legacyExists ? "legacy-task" : "not-installed"
+                    };
+                }
                 try
                 {
                     var status = new ScheduledTaskStatus
@@ -197,7 +221,7 @@ namespace BrightspaceSync.ControlPanel
                                 ReleaseComObject(trigger);
                             }
                         }
-                        status.MatchesExpected = expected.Enabled && shapeMatches;
+                        status.MatchesExpected = expected.Enabled && shapeMatches && !legacyExists;
                     }
                     finally
                     {
@@ -213,7 +237,11 @@ namespace BrightspaceSync.ControlPanel
                 {
                     return new ScheduledTaskStatus { Exists = true, MatchesExpected = false, State = "unreadable" };
                 }
-                finally { ReleaseComObject(task); }
+                finally
+                {
+                    ReleaseComObject(legacyTask);
+                    ReleaseComObject(task);
+                }
             });
         }
 
@@ -223,26 +251,27 @@ namespace BrightspaceSync.ControlPanel
             if (request.IntervalHours < 1 || request.IntervalHours > 24)
                 throw new ArgumentOutOfRangeException("request", "Scheduled interval must be from 1 to 24 hours.");
             if (String.IsNullOrWhiteSpace(request.ExecutablePath) || !File.Exists(request.ExecutablePath))
-                throw new TaskSchedulerOperationException("The Brightspace Sync application executable is unavailable.");
+                throw new TaskSchedulerOperationException("The CourseMirror application executable is unavailable.");
 
             ScheduledTaskStatus current = Inspect(request);
             if ((!request.Enabled && !current.Exists) || (request.Enabled && current.MatchesExpected)) return;
 
             WithService<object>(delegate(dynamic service)
             {
-                dynamic folder = EnsureFolder(service);
+                if (!request.Enabled)
+                {
+                    DeleteExactTask(service, FolderPath);
+                    DeleteExactTask(service, LegacyFolderPath);
+                    return null;
+                }
+
+                dynamic folder = EnsureFolder(service, FolderPath);
                 try
                 {
-                    if (!request.Enabled)
-                    {
-                        folder.DeleteTask(_taskName, 0);
-                        return null;
-                    }
-
                     dynamic definition = service.NewTask(0);
                     try
                     {
-                        definition.RegistrationInfo.Description = "Runs Brightspace Sync in the signed-in user's desktop session.";
+                        definition.RegistrationInfo.Description = "Runs CourseMirror in the signed-in user's desktop session.";
                         definition.Principal.UserId = _userSid;
                         definition.Principal.LogonType = TaskLogonInteractiveToken;
                         definition.Principal.RunLevel = TaskRunLevelLeastPrivilege;
@@ -279,6 +308,7 @@ namespace BrightspaceSync.ControlPanel
                         ReleaseComObject(registered);
                     }
                     finally { ReleaseComObject(definition); }
+                    DeleteExactTask(service, LegacyFolderPath);
                     return null;
                 }
                 finally { ReleaseComObject(folder); }
@@ -290,30 +320,11 @@ namespace BrightspaceSync.ControlPanel
             if (snapshot == null) throw new ArgumentNullException("snapshot");
             WithService<object>(delegate(dynamic service)
             {
-                if (!snapshot.Exists)
-                {
-                    dynamic existing = GetExactTask(service);
-                    if (existing == null) return null;
-                    ReleaseComObject(existing);
-                    dynamic existingFolder = service.GetFolder(FolderPath);
-                    try { existingFolder.DeleteTask(_taskName, 0); }
-                    finally { ReleaseComObject(existingFolder); }
-                    return null;
-                }
-
-                dynamic folder = EnsureFolder(service);
-                try
-                {
-                    if (String.IsNullOrWhiteSpace(snapshot.Xml))
-                        throw new TaskSchedulerOperationException("The previous scheduled task snapshot is unavailable.");
-                    dynamic restored = folder.RegisterTask(
-                        _taskName, snapshot.Xml, TaskCreateOrUpdate,
-                        _userSid, null,
-                        TaskLogonInteractiveToken, null);
-                    ReleaseComObject(restored);
-                    return null;
-                }
-                finally { ReleaseComObject(folder); }
+                DeleteExactTask(service, FolderPath);
+                DeleteExactTask(service, LegacyFolderPath);
+                if (snapshot.Exists) RestoreExactTask(service, FolderPath, snapshot.Xml);
+                if (snapshot.LegacyExists) RestoreExactTask(service, LegacyFolderPath, snapshot.LegacyXml);
+                return null;
             });
         }
 
@@ -330,34 +341,60 @@ namespace BrightspaceSync.ControlPanel
             catch (TaskSchedulerOperationException) { throw; }
             catch (Exception error)
             {
-                throw new TaskSchedulerOperationException("Windows could not update Brightspace Sync scheduling.", error);
+                throw new TaskSchedulerOperationException("Windows could not update CourseMirror scheduling.", error);
             }
             finally { ReleaseComObject(service); }
         }
 
-        private static dynamic EnsureFolder(dynamic service)
+        private static dynamic EnsureFolder(dynamic service, string folderPath)
         {
-            try { return service.GetFolder(FolderPath); }
+            try { return service.GetFolder(folderPath); }
             catch
             {
                 dynamic root = service.GetFolder(@"\");
-                try { return root.CreateFolder(FolderPath.TrimStart('\\'), null); }
+                try { return root.CreateFolder(folderPath.TrimStart('\\'), null); }
                 finally { ReleaseComObject(root); }
             }
         }
 
-        private dynamic GetExactTask(dynamic service)
+        private dynamic GetExactTask(dynamic service, string folderPath)
         {
             dynamic folder = null;
             try
             {
-                folder = service.GetFolder(FolderPath);
+                folder = service.GetFolder(folderPath);
                 return folder.GetTask(_taskName);
             }
             catch (COMException error)
             {
                 if (IsNotFound(error)) return null;
                 throw;
+            }
+            finally { ReleaseComObject(folder); }
+        }
+
+        private void DeleteExactTask(dynamic service, string folderPath)
+        {
+            dynamic task = GetExactTask(service, folderPath);
+            if (task == null) return;
+            ReleaseComObject(task);
+            dynamic folder = service.GetFolder(folderPath);
+            try { folder.DeleteTask(_taskName, 0); }
+            finally { ReleaseComObject(folder); }
+        }
+
+        private void RestoreExactTask(dynamic service, string folderPath, string xml)
+        {
+            if (String.IsNullOrWhiteSpace(xml))
+                throw new TaskSchedulerOperationException("The previous scheduled task snapshot is unavailable.");
+            dynamic folder = EnsureFolder(service, folderPath);
+            try
+            {
+                dynamic restored = folder.RegisterTask(
+                    _taskName, xml, TaskCreateOrUpdate,
+                    _userSid, null,
+                    TaskLogonInteractiveToken, null);
+                ReleaseComObject(restored);
             }
             finally { ReleaseComObject(folder); }
         }

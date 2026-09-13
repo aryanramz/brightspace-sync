@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST_ROOT = path.join(ROOT, 'dist');
-const BUNDLE_NAME = 'Brightspace Sync';
+const BUNDLE_NAME = 'CourseMirror';
 
 export const BUNDLED_NODE_VERSION = '24.20.0';
 export const BUNDLED_NODE_ARCH = 'x64';
@@ -37,6 +37,7 @@ const RUNTIME_SOURCE_FILES = [
   'login-setup.mjs',
   'migration.mjs',
   'process-lock.mjs',
+  'product-migration.mjs',
   'publish-cli.mjs',
   'publish.mjs',
   'refresh-login.mjs',
@@ -105,12 +106,12 @@ async function downloadVerifiedNodeArchive(destination) {
 }
 
 async function extractPrivateNode(archive, extractionRoot, runtimeDir) {
-  const expandCommand = 'Expand-Archive -LiteralPath $env:BRIGHTSPACE_SYNC_NODE_ARCHIVE -DestinationPath $env:BRIGHTSPACE_SYNC_NODE_EXTRACT -Force';
+  const expandCommand = 'Expand-Archive -LiteralPath $env:COURSEMIRROR_NODE_ARCHIVE -DestinationPath $env:COURSEMIRROR_NODE_EXTRACT -Force';
   await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', expandCommand], {
     env: {
       ...process.env,
-      BRIGHTSPACE_SYNC_NODE_ARCHIVE: archive,
-      BRIGHTSPACE_SYNC_NODE_EXTRACT: extractionRoot
+      COURSEMIRROR_NODE_ARCHIVE: archive,
+      COURSEMIRROR_NODE_EXTRACT: extractionRoot
     },
     label: 'Node.js runtime extraction'
   });
@@ -170,12 +171,12 @@ async function build() {
   const sourceLockFile = path.join(ROOT, 'package-lock.json');
   const sourceConfigFile = path.join(ROOT, 'config.example.json');
   const sourceLicenseFile = path.join(ROOT, 'LICENSE');
-  const launcherTemplate = path.join(ROOT, 'packaging', 'windows', 'Brightspace Sync.cmd');
+  const launcherTemplate = path.join(ROOT, 'packaging', 'windows', 'CourseMirror.cmd');
   const controlPanelBuildScript = path.join(ROOT, 'scripts', 'build-windows-control-panel.mjs');
   const credentialHelperBuildScript = path.join(ROOT, 'scripts', 'build-windows-credential-helper.mjs');
-  const controlPanelExe = path.join(ROOT, 'desktop', 'BrightspaceSync.ControlPanel', 'bin', 'Release', 'Brightspace Sync.exe');
+  const controlPanelExe = path.join(ROOT, 'desktop', 'CourseMirror.ControlPanel', 'bin', 'Release', 'CourseMirror.exe');
   const controlPanelConfig = `${controlPanelExe}.config`;
-  const credentialHelperExe = path.join(ROOT, 'desktop', 'BrightspaceSync.CredentialHelper', 'bin', 'Release', 'Brightspace Sync Credential Helper.exe');
+  const credentialHelperExe = path.join(ROOT, 'desktop', 'CourseMirror.CredentialHelper', 'bin', 'Release', 'CourseMirror Credential Helper.exe');
   const credentialHelperConfig = `${credentialHelperExe}.config`;
   for (const [file, label] of [
     [sourcePackageFile, 'package.json'],
@@ -224,17 +225,21 @@ async function build() {
       private: true,
       type: sourcePackage.type,
       description: sourcePackage.description,
+      author: sourcePackage.author,
+      repository: sourcePackage.repository,
+      homepage: sourcePackage.homepage,
+      bugs: sourcePackage.bugs,
       dependencies: sourcePackage.dependencies,
       engines: sourcePackage.engines
     };
     await fs.writeFile(path.join(appDir, 'package.json'), `${JSON.stringify(runtimePackage, null, 2)}\n`, 'utf8');
     await fs.copyFile(sourceConfigFile, path.join(appDir, 'config.example.json'));
     await fs.copyFile(sourceLicenseFile, path.join(appDir, 'LICENSE'));
-    await fs.copyFile(launcherTemplate, path.join(stagedBundle, 'Brightspace Sync.cmd'));
-    await fs.copyFile(controlPanelExe, path.join(stagedBundle, 'Brightspace Sync.exe'));
-    await fs.copyFile(controlPanelConfig, path.join(stagedBundle, 'Brightspace Sync.exe.config'));
-    await fs.copyFile(credentialHelperExe, path.join(stagedBundle, 'Brightspace Sync Credential Helper.exe'));
-    await fs.copyFile(credentialHelperConfig, path.join(stagedBundle, 'Brightspace Sync Credential Helper.exe.config'));
+    await fs.copyFile(launcherTemplate, path.join(stagedBundle, 'CourseMirror.cmd'));
+    await fs.copyFile(controlPanelExe, path.join(stagedBundle, 'CourseMirror.exe'));
+    await fs.copyFile(controlPanelConfig, path.join(stagedBundle, 'CourseMirror.exe.config'));
+    await fs.copyFile(credentialHelperExe, path.join(stagedBundle, 'CourseMirror Credential Helper.exe'));
+    await fs.copyFile(credentialHelperConfig, path.join(stagedBundle, 'CourseMirror Credential Helper.exe.config'));
 
     await installProductionDependencies(appDir, buildRoot, sourcePackage);
 
@@ -245,7 +250,13 @@ async function build() {
 
     const manifest = {
       bundleFormatVersion: 1,
-      application: { name: sourcePackage.name, version: sourcePackage.version },
+      application: {
+        name: 'CourseMirror',
+        packageName: sourcePackage.name,
+        version: sourcePackage.version,
+        publisher: 'aryanramz',
+        repository: 'https://github.com/aryanramz/coursemirror'
+      },
       runtime: {
         name: 'Node.js',
         version: BUNDLED_NODE_VERSION,
@@ -253,9 +264,9 @@ async function build() {
         architecture: BUNDLED_NODE_ARCH,
         archiveSha256: BUNDLED_NODE_ARCHIVE_SHA256
       },
-      entrypoint: 'Brightspace Sync.cmd',
-      desktopEntrypoint: 'Brightspace Sync.exe',
-      credentialHelper: 'Brightspace Sync Credential Helper.exe',
+      entrypoint: 'CourseMirror.cmd',
+      desktopEntrypoint: 'CourseMirror.exe',
+      credentialHelper: 'CourseMirror Credential Helper.exe',
       desktop: {
         technology: '.NET Framework 4.8 WinForms',
         backendContract: 'status/settings JSON over stdout; settings save JSON over stdin; credentials via private named pipe; scheduled sync via fixed hidden entry point',

@@ -18,11 +18,11 @@ async function listTree(root) {
   return found.sort();
 }
 
-const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'brightspace-runtime-paths-'));
+const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'coursemirror-runtime-paths-'));
 try {
   const userHome = path.join(tmp, 'User');
   const localAppData = path.join(userHome, 'AppData', 'Local');
-  const appRoot = path.join(tmp, 'Program Files', 'Brightspace Sync');
+  const appRoot = path.join(tmp, 'Program Files', 'CourseMirror');
   const legacyMirror = path.join(appRoot, 'LegacyMirror');
   await fs.mkdir(path.join(appRoot, 'src'), { recursive: true });
   await fs.writeFile(path.join(appRoot, 'config.example.json'), JSON.stringify({
@@ -50,7 +50,7 @@ try {
     homeDir: userHome
   };
   const first = await loadAppConfig({ mode: 'quick', runtime });
-  const expectedDataDir = path.join(localAppData, 'Brightspace Sync');
+  const expectedDataDir = path.join(localAppData, 'CourseMirror');
   assert.equal(first.paths.dataDir, expectedDataDir);
   assert.equal(first.config.configFile, path.join(expectedDataDir, 'config.json'));
   assert.equal(first.config.profileDir, path.join(expectedDataDir, 'BrowserProfile'));
@@ -70,6 +70,67 @@ try {
 
   const second = await loadAppConfig({ mode: 'full', runtime });
   assert.equal(second.migrations.length, 0, 'runtime migration must be idempotent');
+
+  const renamedHome = path.join(tmp, 'Renamed Product User');
+  const renamedLocalAppData = path.join(renamedHome, 'AppData', 'Local');
+  const renamedAppRoot = path.join(tmp, 'Renamed Product App');
+  const oldProductData = path.join(renamedLocalAppData, 'Brightspace Sync');
+  const newProductData = path.join(renamedLocalAppData, 'CourseMirror');
+  const selectedMirror = path.join(renamedHome, 'School Files');
+  await fs.mkdir(renamedAppRoot, { recursive: true });
+  await fs.copyFile(path.join(appRoot, 'config.example.json'), path.join(renamedAppRoot, 'config.example.json'));
+  await fs.mkdir(path.join(oldProductData, 'BrowserProfile'), { recursive: true });
+  await fs.mkdir(path.join(oldProductData, 'state'), { recursive: true });
+  await fs.mkdir(path.join(oldProductData, 'logs'), { recursive: true });
+  await fs.mkdir(selectedMirror, { recursive: true });
+  await fs.writeFile(path.join(selectedMirror, 'existing-course.txt'), 'preserve-mirror');
+  await fs.writeFile(path.join(oldProductData, 'config.json'), JSON.stringify({
+    configVersion: CURRENT_CONFIG_VERSION,
+    baseUrl: 'https://example.brightspace.com',
+    outputDir: path.relative(oldProductData, selectedMirror),
+    drivePublish: { enabled: false, destination: '' }
+  }, null, 2));
+  await fs.writeFile(path.join(oldProductData, 'BrowserProfile', 'Cookies'), 'legacy-product-session');
+  await fs.writeFile(path.join(oldProductData, 'state', 'state.json'), '{"lastSuccessfulSync":"2026-09-01T00:00:00.000Z"}');
+  await fs.writeFile(path.join(oldProductData, 'logs', 'sync.log'), 'legacy product log');
+  const renamedRuntime = {
+    appRoot: renamedAppRoot,
+    env: { LOCALAPPDATA: renamedLocalAppData, USERPROFILE: renamedHome },
+    platform: 'win32',
+    homeDir: renamedHome
+  };
+  const productMigrated = await loadAppConfig({ runtime: renamedRuntime });
+  assert.equal(productMigrated.paths.dataDir, newProductData);
+  assert.equal(productMigrated.config.outputDir, selectedMirror, 'the selected school mirror must not move during the product rename');
+  assert.equal(await fs.readFile(path.join(selectedMirror, 'existing-course.txt'), 'utf8'), 'preserve-mirror');
+  assert.equal(await fs.readFile(path.join(newProductData, 'BrowserProfile', 'Cookies'), 'utf8'), 'legacy-product-session');
+  assert.equal(await fs.readFile(path.join(newProductData, 'state', 'state.json'), 'utf8'), '{"lastSuccessfulSync":"2026-09-01T00:00:00.000Z"}');
+  assert.equal(await fs.readFile(path.join(newProductData, 'logs', 'sync.log'), 'utf8'), 'legacy product log');
+  assert.equal(await fs.readFile(path.join(oldProductData, 'BrowserProfile', 'Cookies'), 'utf8'), 'legacy-product-session', 'legacy private data must remain available for rollback');
+  assert.ok(productMigrated.migrations.some(action => action.action === 'migrate-product-runtime-root'));
+  assert.equal((await loadAppConfig({ runtime: renamedRuntime })).migrations.length, 0, 'product runtime migration must be idempotent');
+
+  const conflictHome = path.join(tmp, 'Conflict User');
+  const conflictLocalAppData = path.join(conflictHome, 'AppData', 'Local');
+  const conflictAppRoot = path.join(tmp, 'Conflict App');
+  const conflictOld = path.join(conflictLocalAppData, 'Brightspace Sync');
+  const conflictNew = path.join(conflictLocalAppData, 'CourseMirror');
+  await fs.mkdir(conflictAppRoot, { recursive: true });
+  await fs.copyFile(path.join(appRoot, 'config.example.json'), path.join(conflictAppRoot, 'config.example.json'));
+  await fs.mkdir(conflictOld, { recursive: true });
+  await fs.mkdir(conflictNew, { recursive: true });
+  await fs.writeFile(path.join(conflictOld, 'config.json'), '{"baseUrl":"https://old.example.test"}');
+  await fs.writeFile(path.join(conflictNew, 'config.json'), '{"baseUrl":"https://new.example.test"}');
+  await assert.rejects(loadAppConfig({
+    runtime: {
+      appRoot: conflictAppRoot,
+      env: { LOCALAPPDATA: conflictLocalAppData, USERPROFILE: conflictHome },
+      platform: 'win32',
+      homeDir: conflictHome
+    }
+  }), error => error?.code === 'product-runtime-migration-conflict' && /manual review/i.test(error.message));
+  assert.match(await fs.readFile(path.join(conflictOld, 'config.json'), 'utf8'), /old\.example/);
+  assert.match(await fs.readFile(path.join(conflictNew, 'config.json'), 'utf8'), /new\.example/);
 
   const transactionSource = path.join(tmp, 'Transaction Source');
   const transactionTarget = path.join(tmp, 'Transaction Data', 'BrowserProfile');
@@ -119,7 +180,7 @@ try {
       homeDir: freshHome
     }
   });
-  assert.equal(fresh.config.outputDir, path.join(freshHome, 'Documents', 'Brightspace Mirror'));
+  assert.equal(fresh.config.outputDir, path.join(freshHome, 'Documents', 'CourseMirror'));
   assert.equal(fresh.config.baseUrl, '', 'a generated user config must require setup of baseUrl');
   assert.equal(fresh.config.drivePublish.enabled, false, 'Drive publishing must be opt-in for a new user');
   assert.equal(fresh.config.drivePublish.destination, '');
@@ -135,7 +196,7 @@ try {
       ...runtime,
       env: {
         ...runtime.env,
-        BRIGHTSPACE_SYNC_MIRROR_DIR: mirrorOverride
+        COURSEMIRROR_MIRROR_DIR: mirrorOverride
       }
     }
   });
@@ -148,14 +209,29 @@ try {
     env: {
       USERPROFILE: freshHome,
       LOCALAPPDATA: freshLocalAppData,
-      BRIGHTSPACE_SYNC_DATA_DIR: path.join(tmp, 'Custom Data'),
-      BRIGHTSPACE_SYNC_MIRROR_DIR: mirrorOverride
+      COURSEMIRROR_DATA_DIR: path.join(tmp, 'Custom Data'),
+      COURSEMIRROR_MIRROR_DIR: mirrorOverride
     },
     platform: 'win32',
     homeDir: freshHome
   });
   assert.equal(overridden.dataDir, path.join(tmp, 'Custom Data'));
   assert.equal(overridden.mirrorDirOverride, mirrorOverride);
+
+  const legacyOverrides = resolveRuntimePaths({
+    appRoot: freshAppRoot,
+    env: {
+      USERPROFILE: freshHome,
+      LOCALAPPDATA: freshLocalAppData,
+      BRIGHTSPACE_SYNC_DATA_DIR: path.join(tmp, 'Legacy Override Data'),
+      BRIGHTSPACE_SYNC_MIRROR_DIR: path.join(tmp, 'Legacy Override Mirror')
+    },
+    platform: 'win32',
+    homeDir: freshHome
+  });
+  assert.equal(legacyOverrides.dataDir, path.join(tmp, 'Legacy Override Data'), 'legacy environment overrides remain compatible');
+  assert.equal(legacyOverrides.mirrorDirOverride, path.join(tmp, 'Legacy Override Mirror'));
+  assert.equal(legacyOverrides.legacyDataDir, null, 'an explicit data override must not trigger product-root migration');
 
   console.log('Runtime paths self-test: PASS');
 } finally {

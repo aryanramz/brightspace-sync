@@ -11,7 +11,7 @@ import { resolveRuntimePaths } from './runtime-paths.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const EXPECTED_KEYS = [
-  'activeOperation', 'appVersion', 'baseUrlConfigured', 'configExists',
+  'activeOperation', 'appVersion', 'attention', 'baseUrlConfigured', 'configExists',
   'configured', 'dataDir', 'lastSync', 'logsDir', 'mirrorDir',
   'profileExists', 'schemaVersion', 'status'
 ].sort();
@@ -45,7 +45,7 @@ function run(command, args, options) {
   });
 }
 
-const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'brightspace-desktop-backend-'));
+const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'coursemirror-desktop-backend-'));
 try {
   const dataDir = path.join(temp, 'User Data');
   const mirrorDir = path.join(temp, 'Chosen Mirror');
@@ -53,8 +53,8 @@ try {
     appRoot: ROOT,
     env: {
       ...process.env,
-      BRIGHTSPACE_SYNC_DATA_DIR: dataDir,
-      BRIGHTSPACE_SYNC_MIRROR_DIR: mirrorDir
+      COURSEMIRROR_DATA_DIR: dataDir,
+      COURSEMIRROR_MIRROR_DIR: mirrorDir
     }
   };
   const paths = resolveRuntimePaths(runtime);
@@ -71,6 +71,7 @@ try {
   assert.equal(first.profileExists, true);
   assert.equal(first.lastSync, null);
   assert.equal(first.activeOperation, null);
+  assert.equal(first.attention, null);
   for (const externalPath of [first.mirrorDir, first.logsDir, first.dataDir]) {
     assert.equal(isOutside(ROOT, externalPath), true, `${externalPath} must be outside the application tree`);
   }
@@ -81,7 +82,7 @@ try {
     lastSuccessfulSync: completedAt,
     sensitiveIgnoredValue: 'not-returned'
   }));
-  await fs.writeFile(path.join(paths.lockDir, '.brightspace-sync.lock'), JSON.stringify({
+  await fs.writeFile(path.join(paths.lockDir, '.coursemirror.lock'), JSON.stringify({
     mode: 'quick',
     token: 'not-returned',
     pid: process.pid,
@@ -93,9 +94,9 @@ try {
   assert.equal(running.activeOperation, 'Quick Sync');
   assert.equal(running.lastSync, completedAt);
   assertNoSensitiveFields(running);
-  await fs.rm(path.join(paths.lockDir, '.brightspace-sync.lock'), { force: true });
+  await fs.rm(path.join(paths.lockDir, '.coursemirror.lock'), { force: true });
 
-  await fs.writeFile(path.join(paths.lockDir, '.brightspace-sync.lock'), JSON.stringify({
+  await fs.writeFile(path.join(paths.lockDir, '.coursemirror.lock'), JSON.stringify({
     mode: 'full',
     pid: 2147483647,
     hostname: os.hostname(),
@@ -105,16 +106,38 @@ try {
   assert.equal(deadSameHost.status, 'ready');
   assert.equal(deadSameHost.activeOperation, null);
 
-  await fs.writeFile(path.join(paths.lockDir, '.brightspace-sync.lock'), 'malformed lock');
+  await fs.writeFile(path.join(paths.lockDir, '.coursemirror.lock'), 'malformed lock');
   const conservativelyRunning = await getDesktopStatus({ runtime });
   assert.equal(conservativelyRunning.status, 'running');
-  assert.equal(conservativelyRunning.activeOperation, 'Brightspace operation');
+  assert.equal(conservativelyRunning.activeOperation, 'CourseMirror operation');
   const oldTime = new Date('2000-01-01T00:00:00.000Z');
-  await fs.utimes(path.join(paths.lockDir, '.brightspace-sync.lock'), oldTime, oldTime);
+  await fs.utimes(path.join(paths.lockDir, '.coursemirror.lock'), oldTime, oldTime);
   const expiredMalformed = await getDesktopStatus({ runtime });
   assert.equal(expiredMalformed.status, 'ready');
   assert.equal(expiredMalformed.activeOperation, null);
-  await fs.rm(path.join(paths.lockDir, '.brightspace-sync.lock'), { force: true });
+  await fs.rm(path.join(paths.lockDir, '.coursemirror.lock'), { force: true });
+
+  const conflictHome = path.join(temp, 'Conflict Home');
+  const conflictLocal = path.join(conflictHome, 'AppData', 'Local');
+  const conflictOld = path.join(conflictLocal, 'Brightspace Sync');
+  const conflictNew = path.join(conflictLocal, 'CourseMirror');
+  await fs.mkdir(conflictOld, { recursive: true });
+  await fs.mkdir(conflictNew, { recursive: true });
+  await fs.writeFile(path.join(conflictOld, 'config.json'), '{"old":true}');
+  await fs.writeFile(path.join(conflictNew, 'config.json'), '{"new":true}');
+  const conflictStatus = await getDesktopStatus({
+    runtime: {
+      appRoot: ROOT,
+      env: { LOCALAPPDATA: conflictLocal, USERPROFILE: conflictHome },
+      platform: 'win32',
+      homeDir: conflictHome
+    }
+  });
+  assert.equal(conflictStatus.status, 'error');
+  assert.equal(conflictStatus.configured, false);
+  assert.match(conflictStatus.attention, /manual review is required/i);
+  assert.match(conflictStatus.attention, /Brightspace Sync/);
+  assert.match(conflictStatus.attention, /CourseMirror/);
 
   const launched = await run(process.execPath, [path.join(ROOT, 'src', 'launcher.mjs'), 'status', '--json'], {
     cwd: temp,
@@ -134,8 +157,8 @@ try {
     appRoot: ROOT,
     env: {
       ...process.env,
-      BRIGHTSPACE_SYNC_DATA_DIR: unsafeDataDir,
-      BRIGHTSPACE_SYNC_MIRROR_DIR: path.join(temp, 'Unsafe URL Mirror')
+      COURSEMIRROR_DATA_DIR: unsafeDataDir,
+      COURSEMIRROR_MIRROR_DIR: path.join(temp, 'Unsafe URL Mirror')
     }
   };
   const unsafePaths = resolveRuntimePaths(unsafeRuntime);

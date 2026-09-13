@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   AUTHENTICATED_BRIGHTSPACE_SELECTOR,
+  LEGACY_STONY_BROOK_CREDENTIAL_TARGET,
   STONY_BROOK_SSO_HANDOFF_SELECTOR,
   STONY_BROOK_CREDENTIAL_TARGET,
   institutionAdapterForBaseUrl,
@@ -25,6 +26,9 @@ import {
 const USERNAME_SELECTOR = '#username';
 const PASSWORD_SELECTOR = '#password';
 const SUBMIT_SELECTOR = 'button[name="_eventId_proceed"], input[name="_eventId_proceed"], #login-button';
+
+assert.equal(STONY_BROOK_CREDENTIAL_TARGET, 'CourseMirror:institution:stony-brook');
+assert.equal(LEGACY_STONY_BROOK_CREDENTIAL_TARGET, 'Brightspace Sync:institution:stony-brook');
 
 class FakeLocator {
   constructor(page, selector) {

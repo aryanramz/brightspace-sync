@@ -1,7 +1,9 @@
 # Unreleased — Windows distribution foundations
 
-- Separated immutable application files from per-user configuration, browser session, operational state, locks, and log storage under `%LOCALAPPDATA%\Brightspace Sync`.
-- Kept the Brightspace mirror user-selectable, with a per-user `Documents\Brightspace Mirror` default when `outputDir` is blank.
+- Renamed the product to CourseMirror while retaining D2L Brightspace terminology for the external LMS integration.
+- Added safe compatibility for the prior private runtime root, credential target, scheduled-task namespace, and desktop mutex.
+- Separated immutable application files from per-user configuration, browser session, operational state, locks, and log storage under `%LOCALAPPDATA%\CourseMirror`.
+- Kept the Brightspace mirror user-selectable, with a per-user `Documents\CourseMirror` default when `outputDir` is blank.
 - Added idempotent migration for legacy repo-relative config, Chromium profile, global sync state, per-course sync state, and Drive publish state while retaining legacy copies for rollback.
 - Added a stable launcher/runtime path abstraction used by npm scripts, command wrappers, scheduled sync, login setup, sync, publish, and the environment doctor.
 - Removed first-run writes and dependency installation from runtime command wrappers so they can later run from `Program Files`.

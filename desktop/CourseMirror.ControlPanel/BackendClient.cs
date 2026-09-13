@@ -6,7 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 
-namespace BrightspaceSync.ControlPanel
+namespace CourseMirror.ControlPanel
 {
     internal sealed class BackendPaths
     {
@@ -19,7 +19,9 @@ namespace BrightspaceSync.ControlPanel
 
         internal static BackendPaths Resolve()
         {
-            string root = Environment.GetEnvironmentVariable("BRIGHTSPACE_SYNC_DEV_BUNDLE_ROOT");
+            string root = Environment.GetEnvironmentVariable("COURSEMIRROR_DEV_BUNDLE_ROOT");
+            if (String.IsNullOrWhiteSpace(root))
+                root = Environment.GetEnvironmentVariable("BRIGHTSPACE_SYNC_DEV_BUNDLE_ROOT");
             if (String.IsNullOrWhiteSpace(root))
                 root = AppDomain.CurrentDomain.BaseDirectory;
 
@@ -29,9 +31,9 @@ namespace BrightspaceSync.ControlPanel
             string launcher = Path.Combine(app, "src", "launcher.mjs");
 
             if (!File.Exists(node))
-                throw new FileNotFoundException("The private Brightspace Sync runtime is missing. Rebuild or repair the application.", node);
+                throw new FileNotFoundException("The private CourseMirror runtime is missing. Rebuild or repair the application.", node);
             if (!File.Exists(launcher))
-                throw new FileNotFoundException("The Brightspace Sync backend is missing. Rebuild or repair the application.", launcher);
+                throw new FileNotFoundException("The CourseMirror backend is missing. Rebuild or repair the application.", launcher);
 
             return new BackendPaths
             {
@@ -57,6 +59,7 @@ namespace BrightspaceSync.ControlPanel
         public bool profileExists { get; set; }
         public string lastSync { get; set; }
         public string activeOperation { get; set; }
+        public string attention { get; set; }
     }
 
     internal sealed class BackendProcessResult
@@ -240,7 +243,7 @@ namespace BrightspaceSync.ControlPanel
                 RedirectStandardError = true,
                 RedirectStandardInput = redirectStandardInput
             };
-            startInfo.EnvironmentVariables["BRIGHTSPACE_SYNC_GUI"] = "1";
+            startInfo.EnvironmentVariables["COURSEMIRROR_GUI"] = "1";
             return startInfo;
         }
 
@@ -260,7 +263,7 @@ namespace BrightspaceSync.ControlPanel
                 process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e) { stdout.AppendLine(e.Data); };
                 process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e) { stderr.AppendLine(e.Data); };
 
-                if (!process.Start()) throw new InvalidOperationException("The Brightspace Sync backend did not start.");
+                if (!process.Start()) throw new InvalidOperationException("The CourseMirror backend did not start.");
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
                 if (standardInput != null)
@@ -283,7 +286,7 @@ namespace BrightspaceSync.ControlPanel
         {
             BackendProcessResult result = await RunAsync("status", "--json");
             if (result.ExitCode != 0)
-                throw new BackendCommandException("The Brightspace Sync backend could not report its status.", result.ExitCode);
+                throw new BackendCommandException("The CourseMirror backend could not report its status.", result.ExitCode);
 
             string jsonLine = LastNonEmptyLine(result.StandardOutput);
             BackendStatus status;
@@ -293,13 +296,13 @@ namespace BrightspaceSync.ControlPanel
             }
             catch (Exception error)
             {
-                throw new InvalidDataException("The Brightspace Sync backend returned an invalid status response.", error);
+                throw new InvalidDataException("The CourseMirror backend returned an invalid status response.", error);
             }
 
             if (status == null || status.schemaVersion != SupportedStatusSchemaVersion)
-                throw new InvalidDataException("The Brightspace Sync backend status schema is not supported.");
+                throw new InvalidDataException("The CourseMirror backend status schema is not supported.");
             if (String.IsNullOrWhiteSpace(status.mirrorDir) || String.IsNullOrWhiteSpace(status.logsDir) || String.IsNullOrWhiteSpace(status.dataDir))
-                throw new InvalidDataException("The Brightspace Sync backend status response is incomplete.");
+                throw new InvalidDataException("The CourseMirror backend status response is incomplete.");
             return status;
         }
 
@@ -307,7 +310,7 @@ namespace BrightspaceSync.ControlPanel
         {
             BackendProcessResult result = await RunAsync("settings", "--json");
             if (result.ExitCode != 0)
-                throw new BackendCommandException("The Brightspace Sync backend could not load settings.", result.ExitCode);
+                throw new BackendCommandException("The CourseMirror backend could not load settings.", result.ExitCode);
 
             DesktopSettings settings = DeserializeResponse<DesktopSettings>(result.StandardOutput, "settings");
             ValidateSettings(settings);
@@ -320,7 +323,7 @@ namespace BrightspaceSync.ControlPanel
             string payload = _json.Serialize(request);
             BackendProcessResult result = await RunProcessAsync("settings", payload, "save", "--json");
             if (result.ExitCode != 0)
-                throw new BackendCommandException("The Brightspace Sync backend could not save settings.", result.ExitCode);
+                throw new BackendCommandException("The CourseMirror backend could not save settings.", result.ExitCode);
 
             SettingsSaveResponse response = ParseSettingsSaveResponse(result.StandardOutput);
             return response;
@@ -335,14 +338,14 @@ namespace BrightspaceSync.ControlPanel
         {
             SettingsSaveResponse response = DeserializeResponse<SettingsSaveResponse>(standardOutput, "settings save");
             if (response == null || response.schemaVersion != SupportedStatusSchemaVersion)
-                throw new InvalidDataException("The Brightspace Sync backend settings-save schema is not supported.");
+                throw new InvalidDataException("The CourseMirror backend settings-save schema is not supported.");
             if (response.ok)
             {
                 ValidateSettings(response.settings);
             }
             else if (response.errors == null || response.errors.Length == 0)
             {
-                throw new InvalidDataException("The Brightspace Sync backend returned an incomplete settings validation response.");
+                throw new InvalidDataException("The CourseMirror backend returned an incomplete settings validation response.");
             }
             return response;
         }
@@ -371,19 +374,19 @@ namespace BrightspaceSync.ControlPanel
             }
             catch (Exception error)
             {
-                throw new InvalidDataException("The Brightspace Sync backend returned an invalid " + label + " response.", error);
+                throw new InvalidDataException("The CourseMirror backend returned an invalid " + label + " response.", error);
             }
         }
 
         private static void ValidateSettings(DesktopSettings settings)
         {
             if (settings == null || settings.schemaVersion != SupportedStatusSchemaVersion)
-                throw new InvalidDataException("The Brightspace Sync backend settings schema is not supported.");
+                throw new InvalidDataException("The CourseMirror backend settings schema is not supported.");
             if (String.IsNullOrWhiteSpace(settings.mirrorDir) || settings.drive == null || settings.authentication == null || settings.schedule == null)
-                throw new InvalidDataException("The Brightspace Sync backend settings response is incomplete.");
+                throw new InvalidDataException("The CourseMirror backend settings response is incomplete.");
             if (settings.schedule.intervalHours < 1 || settings.schedule.intervalHours > 24
                 || settings.schedule.fullIntervalDays < 1 || settings.schedule.fullIntervalDays > 30)
-                throw new InvalidDataException("The Brightspace Sync backend returned invalid scheduling settings.");
+                throw new InvalidDataException("The CourseMirror backend returned invalid scheduling settings.");
         }
 
         internal static string LastNonEmptyLine(string value)

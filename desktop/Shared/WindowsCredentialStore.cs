@@ -3,7 +3,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace BrightspaceSync.Security
+namespace CourseMirror.Security
 {
     internal sealed class CredentialRecord : IDisposable
     {
@@ -39,7 +39,8 @@ namespace BrightspaceSync.Security
 
     internal sealed class WindowsCredentialStore : ICredentialStore
     {
-        internal const string StonyBrookTarget = "Brightspace Sync:institution:stony-brook";
+        internal const string StonyBrookTarget = "CourseMirror:institution:stony-brook";
+        internal const string LegacyStonyBrookTarget = "Brightspace Sync:institution:stony-brook";
         private const uint CredentialTypeGeneric = 1;
         private const uint PersistLocalMachine = 2;
         private const int ErrorNotFound = 1168;
@@ -78,7 +79,8 @@ namespace BrightspaceSync.Security
 
         private static void ValidateTarget(string target)
         {
-            if (!String.Equals(target, StonyBrookTarget, StringComparison.Ordinal))
+            if (!String.Equals(target, StonyBrookTarget, StringComparison.Ordinal)
+                && !String.Equals(target, LegacyStonyBrookTarget, StringComparison.Ordinal))
                 throw new CredentialStoreException("The requested credential target is not supported.");
         }
 
@@ -174,6 +176,51 @@ namespace BrightspaceSync.Security
             if (CredDelete(target, CredentialTypeGeneric, 0)) return;
             if (Marshal.GetLastWin32Error() == ErrorNotFound) return;
             throw new CredentialStoreException("Windows could not remove the saved Brightspace credential.");
+        }
+    }
+
+    internal sealed class CompatibleCredentialStore : ICredentialStore
+    {
+        private readonly ICredentialStore _inner;
+
+        internal CompatibleCredentialStore(ICredentialStore inner)
+        {
+            if (inner == null) throw new ArgumentNullException("inner");
+            _inner = inner;
+        }
+
+        private static void ValidateCanonicalTarget(string target)
+        {
+            if (!String.Equals(target, WindowsCredentialStore.StonyBrookTarget, StringComparison.Ordinal))
+                throw new CredentialStoreException("The requested credential target is not supported.");
+        }
+
+        public CredentialRecord Read(string target)
+        {
+            ValidateCanonicalTarget(target);
+            CredentialRecord current = _inner.Read(WindowsCredentialStore.StonyBrookTarget);
+            return current ?? _inner.Read(WindowsCredentialStore.LegacyStonyBrookTarget);
+        }
+
+        public string ReadUsername(string target)
+        {
+            ValidateCanonicalTarget(target);
+            string current = _inner.ReadUsername(WindowsCredentialStore.StonyBrookTarget);
+            return current ?? _inner.ReadUsername(WindowsCredentialStore.LegacyStonyBrookTarget);
+        }
+
+        public void Write(string target, string username, string password)
+        {
+            ValidateCanonicalTarget(target);
+            _inner.Write(WindowsCredentialStore.StonyBrookTarget, username, password);
+            _inner.Delete(WindowsCredentialStore.LegacyStonyBrookTarget);
+        }
+
+        public void Delete(string target)
+        {
+            ValidateCanonicalTarget(target);
+            _inner.Delete(WindowsCredentialStore.StonyBrookTarget);
+            _inner.Delete(WindowsCredentialStore.LegacyStonyBrookTarget);
         }
     }
 }

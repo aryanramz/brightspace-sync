@@ -1,9 +1,16 @@
 {
-  "name": "brightspace-sync",
+  "name": "coursemirror",
   "version": "2.4.1",
   "private": true,
   "type": "module",
-  "description": "Read-focused Brightspace mirror for Windows with QUICK/FULL modes, term-scoped archives, optional Drive publishing, scheduling, and overlap-safe run locking.",
+  "description": "CourseMirror — a read-focused Windows mirroring utility for D2L Brightspace.",
+  "author": "aryanramz",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aryanramz/coursemirror.git"
+  },
+  "homepage": "https://github.com/aryanramz/coursemirror#readme",
+  "bugs": "https://github.com/aryanramz/coursemirror/issues",
   "scripts": {
     "syntax-check": "node scripts/syntax-check.mjs",
     "sync": "node src/launcher.mjs full",

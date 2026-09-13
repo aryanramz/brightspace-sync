@@ -1,4 +1,4 @@
-using BrightspaceSync.Security;
+using CourseMirror.Security;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
-namespace BrightspaceSync.ControlPanel
+namespace CourseMirror.ControlPanel
 {
     internal static class ControlPanelSelfTest
     {
@@ -162,6 +162,18 @@ namespace BrightspaceSync.ControlPanel
                 const string syntheticUsername = "SyntheticStudent";
                 const string syntheticPassword = "SyntheticPasswordValue123";
                 const string replacementPassword = "ReplacementPasswordValue456";
+                var legacyTargetStore = new FakeCredentialStore(syntheticUsername, syntheticPassword, true);
+                var compatibleStore = new CompatibleCredentialStore(legacyTargetStore);
+                bool legacyCredentialTargetCompatible;
+                using (CredentialRecord legacyRecord = compatibleStore.Read(WindowsCredentialStore.StonyBrookTarget))
+                {
+                    legacyCredentialTargetCompatible = legacyRecord != null
+                        && String.Equals(legacyRecord.Username, syntheticUsername, StringComparison.Ordinal);
+                }
+                compatibleStore.Write(WindowsCredentialStore.StonyBrookTarget, syntheticUsername, replacementPassword);
+                legacyCredentialTargetCompatible = legacyCredentialTargetCompatible
+                    && String.Equals(legacyTargetStore.CurrentTarget, WindowsCredentialStore.StonyBrookTarget, StringComparison.Ordinal)
+                    && String.Equals(legacyTargetStore.CurrentPassword, replacementPassword, StringComparison.Ordinal);
                 DesktopSettings stonyBrookSettings = new DesktopSettings
                 {
                     schemaVersion = 1,
@@ -592,12 +604,25 @@ namespace BrightspaceSync.ControlPanel
                     && syntheticServiceA.ManagedTaskName != syntheticServiceB.ManagedTaskName
                     && !syntheticTaskLibrary.ContainsKey(syntheticServiceA.ManagedTaskName)
                     && syntheticTaskLibrary[syntheticServiceB.ManagedTaskName] == "user-b-task";
-                bool taskIdentityAndArgumentsAreFixed = WindowsTaskSchedulerService.FolderPath == @"\Brightspace Sync"
+                bool taskIdentityAndArgumentsAreFixed = WindowsTaskSchedulerService.FolderPath == @"\CourseMirror"
+                    && WindowsTaskSchedulerService.LegacyFolderPath == @"\Brightspace Sync"
                     && WindowsTaskSchedulerService.TaskArguments == "--scheduled-run"
                     && !WindowsTaskSchedulerService.TaskArguments.Contains("password")
                     && !WindowsTaskSchedulerService.TaskArguments.Contains("config")
                     && !WindowsTaskSchedulerService.TaskArguments.Contains(syntheticSidA)
                     && !WindowsTaskSchedulerService.TaskArguments.Contains(syntheticSidB);
+                var legacyTaskScheduler = new FakeTaskSchedulerService(null, "legacy-current-user-task");
+                var legacyTaskBackend = new ScriptedBackendClient(status, new BackendProcessResult { ExitCode = 0 });
+                bool legacyCurrentUserTaskReconciled;
+                using (var settingsForm = new SetupSettingsForm(
+                    legacyTaskBackend, currentSettings, false, new NullFolderPicker(),
+                    new FakeCredentialStore(), legacyTaskScheduler))
+                {
+                    legacyCurrentUserTaskReconciled = await settingsForm.SaveForSelfTestAsync(null)
+                        && legacyTaskScheduler.CurrentXml == null
+                        && legacyTaskScheduler.LegacyXml == null
+                        && legacyTaskScheduler.UnrelatedTask == "unrelated-task-preserved";
+                }
                 bool indefiniteTaskPolicyValidated = WindowsTaskSchedulerService.HasIndefiniteTimePolicy("PT0S", String.Empty, String.Empty)
                     && WindowsTaskSchedulerService.HasIndefiniteTimePolicy("PT0S", "PT0S", null)
                     && !WindowsTaskSchedulerService.HasIndefiniteTimePolicy("PT4H", String.Empty, String.Empty)
@@ -635,7 +660,7 @@ namespace BrightspaceSync.ControlPanel
                 bool initialButtonsEnabled;
                 bool externalLockStartedDisablesButtons;
                 bool externalLockFinishedReturnsReady;
-                string lockFile = Path.Combine(status.dataDir, "state", ".brightspace-sync.lock");
+                string lockFile = Path.Combine(status.dataDir, "state", ".coursemirror.lock");
                 using (var form = new MainForm(backend, MainForm.StatusRefreshIntervalMilliseconds))
                 {
                     SynchronizationContext.SetSynchronizationContext(null);
@@ -778,6 +803,10 @@ namespace BrightspaceSync.ControlPanel
                 var result = new
                 {
                     schemaVersion = 1,
+                    productName = Application.ProductName,
+                    executableName = Path.GetFileName(Application.ExecutablePath),
+                    mutexName = Program.MutexName,
+                    legacyMutexCompatibility = Program.LegacyMutexName == @"Local\BrightspaceSync.ControlPanel",
                     applicationRoot = backend.Paths.ApplicationRoot,
                     applicationRootContainsSpaces = backend.Paths.ApplicationRoot.IndexOf(' ') >= 0,
                     nodeExecutable = backend.Paths.NodeExecutable,
@@ -845,6 +874,7 @@ namespace BrightspaceSync.ControlPanel
                     combinedCredentialAndTaskRollback = combinedCredentialAndTaskRollback,
                     perUserTaskIdentityIsolated = perUserTaskIdentityIsolated,
                     taskIdentityAndArgumentsAreFixed = taskIdentityAndArgumentsAreFixed,
+                    legacyCurrentUserTaskReconciled = legacyCurrentUserTaskReconciled,
                     indefiniteTaskPolicyValidated = indefiniteTaskPolicyValidated,
                     obsoleteTaskDetectedAndRepaired = obsoleteTaskDetectedAndRepaired,
                     existingPasswordNotRedisplayed = existingPasswordNotRedisplayed,
@@ -860,6 +890,7 @@ namespace BrightspaceSync.ControlPanel
                     credentialFailureIsSafe = credentialFailureIsSafe,
                     passwordClearedAfterSave = passwordClearedAfterSave,
                     genericCredentialFieldsHidden = genericCredentialFieldsHidden,
+                    legacyCredentialTargetCompatible = legacyCredentialTargetCompatible,
                     statusRefreshIntervalMilliseconds = MainForm.StatusRefreshIntervalMilliseconds,
                     initialButtonsEnabled = initialButtonsEnabled,
                     externalLockStartedDisablesButtons = externalLockStartedDisablesButtons,
@@ -1141,13 +1172,15 @@ namespace BrightspaceSync.ControlPanel
 
     internal sealed class FakeTaskSchedulerService : ITaskSchedulerService
     {
-        internal FakeTaskSchedulerService(string currentXml)
+        internal FakeTaskSchedulerService(string currentXml, string legacyXml = null)
         {
             CurrentXml = currentXml;
+            LegacyXml = legacyXml;
             UnrelatedTask = "unrelated-task-preserved";
         }
 
         internal string CurrentXml { get; private set; }
+        internal string LegacyXml { get; private set; }
         internal string UnrelatedTask { get; private set; }
         internal ScheduledTaskRequest CurrentRequest { get; private set; }
         internal bool FailApply { get; set; }
@@ -1160,14 +1193,20 @@ namespace BrightspaceSync.ControlPanel
         public ScheduledTaskSnapshot Capture()
         {
             if (FailCapture) throw new TaskSchedulerOperationException("Synthetic Task Scheduler unavailability.");
-            return new ScheduledTaskSnapshot { Exists = CurrentXml != null, Xml = CurrentXml };
+            return new ScheduledTaskSnapshot
+            {
+                Exists = CurrentXml != null,
+                Xml = CurrentXml,
+                LegacyExists = LegacyXml != null,
+                LegacyXml = LegacyXml
+            };
         }
 
         public ScheduledTaskStatus Inspect(ScheduledTaskRequest expected)
         {
             if (FailInspect) throw new TaskSchedulerOperationException("Synthetic Task Scheduler unavailability.");
-            bool exists = CurrentXml != null;
-            bool matches = !expected.Enabled ? !exists : exists && CurrentRequest != null
+            bool exists = CurrentXml != null || LegacyXml != null;
+            bool matches = !expected.Enabled ? !exists : CurrentXml != null && LegacyXml == null && CurrentRequest != null
                 && CurrentRequest.Enabled
                 && CurrentRequest.IntervalHours == expected.IntervalHours
                 && String.Equals(CurrentRequest.ExecutablePath, expected.ExecutablePath, StringComparison.OrdinalIgnoreCase);
@@ -1192,6 +1231,7 @@ namespace BrightspaceSync.ControlPanel
             CurrentXml = request.Enabled
                 ? "task:" + request.IntervalHours + ":" + WindowsTaskSchedulerService.TaskArguments
                 : null;
+            LegacyXml = null;
             if (FailApply) throw new TaskSchedulerOperationException("Synthetic task registration failure.");
         }
 
@@ -1200,6 +1240,7 @@ namespace BrightspaceSync.ControlPanel
             RestoreCalls++;
             if (FailRestore) throw new TaskSchedulerOperationException("Synthetic task rollback failure.");
             CurrentXml = snapshot.Exists ? snapshot.Xml : null;
+            LegacyXml = snapshot.LegacyExists ? snapshot.LegacyXml : null;
             CurrentRequest = null;
         }
     }
@@ -1209,10 +1250,13 @@ namespace BrightspaceSync.ControlPanel
         private string _username;
         private string _password;
 
-        internal FakeCredentialStore(string username = "", string password = "")
+        private string _target;
+
+        internal FakeCredentialStore(string username = "", string password = "", bool legacyOnly = false)
         {
             _username = username ?? String.Empty;
             _password = password ?? String.Empty;
+            _target = legacyOnly ? WindowsCredentialStore.LegacyStonyBrookTarget : WindowsCredentialStore.StonyBrookTarget;
         }
 
         internal bool FailReads { get; set; }
@@ -1224,13 +1268,16 @@ namespace BrightspaceSync.ControlPanel
         internal int DeleteCalls { get; private set; }
         internal bool Exists { get { return !String.IsNullOrWhiteSpace(_username) && !String.IsNullOrEmpty(_password); } }
         internal string CurrentPassword { get { return _password; } }
+        internal string CurrentTarget { get { return _target; } }
 
         public CredentialRecord Read(string target)
         {
             ValidateTarget(target);
             ReadCalls++;
             if (FailReads) throw new CredentialStoreException("Windows could not read the saved Brightspace credential.");
-            return Exists ? new CredentialRecord(_username, _password.ToCharArray()) : null;
+            return Exists && String.Equals(target, _target, StringComparison.Ordinal)
+                ? new CredentialRecord(_username, _password.ToCharArray())
+                : null;
         }
 
         public string ReadUsername(string target)
@@ -1238,7 +1285,7 @@ namespace BrightspaceSync.ControlPanel
             ValidateTarget(target);
             ReadCalls++;
             if (FailReads) throw new CredentialStoreException("Windows could not inspect the saved Brightspace credential.");
-            return Exists ? _username : null;
+            return Exists && String.Equals(target, _target, StringComparison.Ordinal) ? _username : null;
         }
 
         public void Write(string target, string username, string password)
@@ -1249,6 +1296,7 @@ namespace BrightspaceSync.ControlPanel
                 throw new CredentialStoreException("Windows could not save the Brightspace credential.");
             _username = username ?? String.Empty;
             _password = password ?? String.Empty;
+            _target = target;
         }
 
         public void Delete(string target)
@@ -1256,13 +1304,17 @@ namespace BrightspaceSync.ControlPanel
             ValidateTarget(target);
             DeleteCalls++;
             if (FailDeletes) throw new CredentialStoreException("Windows could not remove the saved Brightspace credential.");
-            _username = String.Empty;
-            _password = String.Empty;
+            if (String.Equals(target, _target, StringComparison.Ordinal))
+            {
+                _username = String.Empty;
+                _password = String.Empty;
+            }
         }
 
         private static void ValidateTarget(string target)
         {
-            if (!String.Equals(target, WindowsCredentialStore.StonyBrookTarget, StringComparison.Ordinal))
+            if (!String.Equals(target, WindowsCredentialStore.StonyBrookTarget, StringComparison.Ordinal)
+                && !String.Equals(target, WindowsCredentialStore.LegacyStonyBrookTarget, StringComparison.Ordinal))
                 throw new CredentialStoreException("The requested credential target is not supported.");
         }
     }
