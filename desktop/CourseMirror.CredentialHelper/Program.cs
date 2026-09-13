@@ -1,4 +1,4 @@
-using BrightspaceSync.Security;
+using CourseMirror.Security;
 using System;
 using System.IO;
 using System.IO.Pipes;
@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
 
-namespace BrightspaceSync.CredentialHelper
+namespace CourseMirror.CredentialHelper
 {
     internal sealed class PipeRequest
     {
@@ -24,7 +24,7 @@ namespace BrightspaceSync.CredentialHelper
         private static int Main(string[] args)
         {
             if (args.Length == 2 && args[0] == "--self-test") return SelfTest(args[1]);
-            if (args.Length != 2 || args[0] != "--pipe" || !Regex.IsMatch(args[1], @"^BrightspaceSync-Credential-[A-Za-z0-9-]+$")) return 2;
+            if (args.Length != 2 || args[0] != "--pipe" || !Regex.IsMatch(args[1], @"^CourseMirror-Credential-[A-Za-z0-9-]+$")) return 2;
 
             try
             {
@@ -35,7 +35,7 @@ namespace BrightspaceSync.CredentialHelper
                     var serializer = new JavaScriptSerializer { MaxJsonLength = MaximumRequestCharacters };
                     PipeRequest request = serializer.Deserialize<PipeRequest>(input);
                     input = String.Empty;
-                    string response = ExecuteAndSerialize(request, new WindowsCredentialStore(), serializer);
+                    string response = ExecuteAndSerialize(request, new CompatibleCredentialStore(new WindowsCredentialStore()), serializer);
                     byte[] output = Encoding.UTF8.GetBytes(response);
                     try
                     {
@@ -119,7 +119,7 @@ namespace BrightspaceSync.CredentialHelper
             {
                 File.WriteAllText(
                     outputFile,
-                    "{\"schemaVersion\":1,\"pipeTransport\":true,\"credentialTargetStable\":true}",
+                    "{\"schemaVersion\":1,\"pipeTransport\":true,\"credentialTargetStable\":true,\"legacyCredentialTargetCompatible\":true}",
                     new UTF8Encoding(false));
                 return 0;
             }

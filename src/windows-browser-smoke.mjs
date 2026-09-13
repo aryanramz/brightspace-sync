@@ -11,7 +11,7 @@ if (process.platform !== 'win32') {
 }
 
 const browser = findChromiumExecutable('');
-const profileDir = await fs.mkdtemp(path.join(os.tmpdir(), 'brightspace-sync-smoke-'));
+const profileDir = await fs.mkdtemp(path.join(os.tmpdir(), 'coursemirror-smoke-'));
 let context;
 
 try {
@@ -21,9 +21,9 @@ try {
     args: ['--no-first-run', '--no-default-browser-check']
   });
   const page = context.pages()[0] || await context.newPage();
-  await page.goto('data:text/html,<title>Brightspace Sync Smoke</title><p>ok</p>');
+  await page.goto('data:text/html,<title>CourseMirror Smoke</title><p>ok</p>');
   const title = await page.title();
-  if (title !== 'Brightspace Sync Smoke') throw new Error(`Unexpected browser title: ${title}`);
+  if (title !== 'CourseMirror Smoke') throw new Error(`Unexpected browser title: ${title}`);
   console.log(`Windows browser smoke test: PASS (${browser.name})`);
 } finally {
   await context?.close().catch(() => {});

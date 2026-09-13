@@ -37,7 +37,7 @@ if (!COMMANDS[command]) {
   });
 
   child.once('error', error => {
-    console.error(`Could not launch Brightspace Sync: ${error.message}`);
+    console.error(`Could not launch CourseMirror: ${error.message}`);
     process.exitCode = 1;
   });
   child.once('exit', (code, signal) => {

@@ -35,6 +35,6 @@ try {
     process.exitCode = 2;
   }
 } catch (error) {
-  console.error(`Brightspace Sync desktop backend failed: ${error?.message || String(error)}`);
+  console.error(`CourseMirror desktop backend failed: ${error?.message || String(error)}`);
   process.exitCode = 1;
 }

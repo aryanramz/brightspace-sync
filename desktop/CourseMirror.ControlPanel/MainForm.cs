@@ -7,7 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-namespace BrightspaceSync.ControlPanel
+namespace CourseMirror.ControlPanel
 {
     internal sealed class MainForm : Form
     {
@@ -40,7 +40,7 @@ namespace BrightspaceSync.ControlPanel
         {
             _backend = backend;
             _settingsDialog = settingsDialog ?? new SettingsDialogService();
-            Text = "Brightspace Sync";
+            Text = "CourseMirror";
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(520, 390);
             MinimumSize = new Size(536, 429);
@@ -55,7 +55,7 @@ namespace BrightspaceSync.ControlPanel
             var title = new Label
             {
                 AutoSize = true,
-                Text = "Brightspace Sync",
+                Text = "CourseMirror",
                 Font = new Font("Segoe UI Semibold", 18F, FontStyle.Bold, GraphicsUnit.Point),
                 ForeColor = Color.FromArgb(34, 54, 74),
                 Location = new Point(24, 20)
@@ -150,7 +150,9 @@ namespace BrightspaceSync.ControlPanel
             {
                 if (_backend == null) _backend = new BackendClient();
                 bool refreshed = await RefreshStatusAsync(true, false, false);
-                if (refreshed && !_closing && !_backendStatus.configured && String.IsNullOrWhiteSpace(_backendStatus.activeOperation))
+                if (refreshed && !_closing && !_backendStatus.configured
+                    && String.IsNullOrWhiteSpace(_backendStatus.activeOperation)
+                    && String.IsNullOrWhiteSpace(_backendStatus.attention))
                 {
                     _firstRunSetupOffered = true;
                     await OpenSettingsAsync(true);
@@ -160,7 +162,7 @@ namespace BrightspaceSync.ControlPanel
             {
                 if (_closing) return;
                 SetStatus("Error", Color.Firebrick);
-                _activity.Text = "The packaged backend could not be started. Rebuild or repair Brightspace Sync.";
+                _activity.Text = "The packaged backend could not be started. Rebuild or repair CourseMirror.";
                 SetSyncButtons(false);
             }
         }
@@ -189,10 +191,15 @@ namespace BrightspaceSync.ControlPanel
 
                 if (!_operationRunning)
                 {
-                    if (!String.IsNullOrWhiteSpace(_backendStatus.activeOperation))
+                    if (!String.IsNullOrWhiteSpace(_backendStatus.attention))
+                    {
+                        SetStatus("Error", Color.Firebrick);
+                        if (updateActivity) _activity.Text = _backendStatus.attention;
+                    }
+                    else if (!String.IsNullOrWhiteSpace(_backendStatus.activeOperation))
                     {
                         SetStatus("Running " + _backendStatus.activeOperation, Color.DarkGoldenrod);
-                        if (updateActivity) _activity.Text = "Another Brightspace operation is currently active.";
+                        if (updateActivity) _activity.Text = "Another CourseMirror operation is currently active.";
                     }
                     else
                     {
@@ -201,7 +208,7 @@ namespace BrightspaceSync.ControlPanel
                         {
                             _activity.Text = _backendStatus.configured
                                 ? "Ready."
-                                : "Setup is not complete. Open Settings to configure Brightspace Sync.";
+                                : "Setup is not complete. Open Settings to configure CourseMirror.";
                         }
                     }
                 }
@@ -247,18 +254,26 @@ namespace BrightspaceSync.ControlPanel
                 UpdateSyncButtons();
                 return;
             }
+            if (!String.IsNullOrWhiteSpace(_backendStatus.attention))
+            {
+                _operationStarting = false;
+                SetStatus("Error", Color.Firebrick);
+                _activity.Text = _backendStatus.attention;
+                UpdateSyncButtons();
+                return;
+            }
             if (!String.IsNullOrWhiteSpace(_backendStatus.activeOperation))
             {
                 _operationStarting = false;
                 SetStatus("Running " + _backendStatus.activeOperation, Color.DarkGoldenrod);
-                _activity.Text = "Another Brightspace operation is currently active.";
+                _activity.Text = "Another CourseMirror operation is currently active.";
                 UpdateSyncButtons();
                 return;
             }
             if (!_backendStatus.configured)
             {
                 _operationStarting = false;
-                _activity.Text = "Setup is not complete. Open Settings to configure Brightspace Sync.";
+                _activity.Text = "Setup is not complete. Open Settings to configure CourseMirror.";
                 UpdateSyncButtons();
                 return;
             }
@@ -324,7 +339,7 @@ namespace BrightspaceSync.ControlPanel
             {
                 _operationStarting = false;
                 SetStatus("Running " + _backendStatus.activeOperation, Color.DarkGoldenrod);
-                _activity.Text = "Another Brightspace operation is currently active.";
+                _activity.Text = "Another CourseMirror operation is currently active.";
                 UpdateSyncButtons();
                 return;
             }
@@ -388,7 +403,7 @@ namespace BrightspaceSync.ControlPanel
                     {
                         _activity.Text = String.IsNullOrWhiteSpace(_backendStatus.activeOperation)
                             ? "Settings saved. Ready."
-                            : "Settings saved. Another Brightspace operation is currently active.";
+                            : "Settings saved. Another CourseMirror operation is currently active.";
                     }
                 }
                 else if (_backendStatus != null && !_backendStatus.configured)
@@ -414,14 +429,14 @@ namespace BrightspaceSync.ControlPanel
         {
             if (_backendStatus == null)
             {
-                MessageBox.Show("Runtime paths are not available yet.", "Brightspace Sync", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("Runtime paths are not available yet.", "CourseMirror", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
             string directory = mirror ? _backendStatus.mirrorDir : _backendStatus.logsDir;
             if (!Directory.Exists(directory))
             {
                 string label = mirror ? "mirror" : "logs";
-                MessageBox.Show("The " + label + " directory does not exist yet.", "Brightspace Sync", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("The " + label + " directory does not exist yet.", "CourseMirror", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -437,7 +452,7 @@ namespace BrightspaceSync.ControlPanel
             }
             catch (Exception)
             {
-                MessageBox.Show("Windows could not open that directory.", "Brightspace Sync", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("Windows could not open that directory.", "CourseMirror", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -494,7 +509,7 @@ namespace BrightspaceSync.ControlPanel
                 return;
             }
             args.Cancel = true;
-            MessageBox.Show("A Brightspace operation is still running. Keep Brightspace Sync open until it finishes.", "Brightspace Sync", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("A sync operation is still running. Keep CourseMirror open until it finishes.", "CourseMirror", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private void OnFormClosed(object sender, FormClosedEventArgs args)

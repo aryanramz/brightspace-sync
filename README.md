@@ -1,19 +1,23 @@
-# Brightspace Sync
+# CourseMirror
 
-[![CI](https://github.com/aryanramz/brightspace-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/aryanramz/brightspace-sync/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/aryanramz/brightspace-sync)](https://github.com/aryanramz/brightspace-sync/releases/latest)
+**CourseMirror — for D2L Brightspace**
+
+[![CI](https://github.com/aryanramz/coursemirror/actions/workflows/ci.yml/badge.svg)](https://github.com/aryanramz/coursemirror/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/aryanramz/coursemirror)](https://github.com/aryanramz/coursemirror/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-green.svg)](https://nodejs.org/)
 
 **Keep a structured, term-aware local mirror of the Brightspace content you can already access.**
 
-Brightspace Sync is a read-focused authenticated crawler and incremental course-mirroring pipeline for D2L Brightspace. It uses Playwright with a dedicated persistent Chromium profile, discovers courses dynamically, captures student-visible course data, tracks meaningful changes, and optionally publishes the mirror to a Google Drive for desktop folder for downstream search or AI workflows.
+CourseMirror is a read-focused authenticated crawler and incremental course-mirroring pipeline for D2L Brightspace. It uses Playwright with a dedicated persistent Chromium profile, discovers courses dynamically, captures student-visible course data, tracks meaningful changes, and optionally publishes the mirror to a Google Drive for desktop folder for downstream search or AI workflows.
 
-> This project is unofficial and is not affiliated with, endorsed by, or supported by D2L or any educational institution. Users are responsible for complying with their institution's policies, applicable terms of service, and copyright rules.
+> CourseMirror is an unofficial third-party utility for D2L Brightspace. It is not affiliated with or endorsed by D2L Corporation.
+
+Users are responsible for complying with their institution's policies, applicable terms of service, and copyright rules.
 
 ## Why this exists
 
-Brightspace is useful as a live LMS, but less convenient as a durable personal archive or machine-readable knowledge source. Brightspace Sync turns the student-visible parts of an account into a predictable filesystem structure that can be searched, diffed, archived by semester, or connected to downstream tooling.
+Brightspace is useful as a live LMS, but less convenient as a durable personal archive or machine-readable knowledge source. CourseMirror turns the student-visible parts of an account into a predictable filesystem structure that can be searched, diffed, archived by semester, or connected to downstream tooling.
 
 Typical use cases include:
 
@@ -106,15 +110,15 @@ Sync complete.
 - Access to a Brightspace environment through a normal student account
 - Optional: Google Drive for desktop if using Drive publishing
 
-Brightspace Sync is currently packaged and tested as a **Windows desktop application**. macOS, Linux, iOS, iPadOS, and Android are not supported targets in this release.
+CourseMirror is currently packaged and tested as a **Windows desktop application**. macOS, Linux, iOS, iPadOS, and Android are not supported targets in this release.
 
 ## Quick start
 
 1. Clone the repository and install the locked dependencies:
 
    ```powershell
-   git clone https://github.com/aryanramz/brightspace-sync.git
-   cd brightspace-sync
+   git clone https://github.com/aryanramz/coursemirror.git
+   cd coursemirror
    npm ci
    ```
 
@@ -126,18 +130,18 @@ Brightspace Sync is currently packaged and tested as a **Windows desktop applica
    npm run doctor
    ```
 
-   The normal Windows path is `%LOCALAPPDATA%\Brightspace Sync\config.json`.
+   The normal Windows path is `%LOCALAPPDATA%\CourseMirror\config.json`.
 
 3. Edit that `config.json` and set at minimum:
 
    ```json
    {
      "baseUrl": "https://your-school.brightspace.com",
-     "outputDir": "D:\\Brightspace Mirror"
+     "outputDir": "D:\\CourseMirror"
    }
    ```
 
-   `outputDir` is user-selectable. If it is blank, the default is `Documents\Brightspace Mirror` in the current Windows profile.
+   `outputDir` is user-selectable. If it is blank, the default is `Documents\CourseMirror` in the current Windows profile.
 
 4. Run the login setup helper:
 
@@ -145,7 +149,7 @@ Brightspace Sync is currently packaged and tested as a **Windows desktop applica
    SETUP_LOGIN.cmd
    ```
 
-   Sign into your institution normally. SSO and MFA remain under your institution's control. Brightspace Sync does not require your password in code or configuration.
+   Sign into your institution normally. SSO and MFA remain under your institution's control. CourseMirror does not require your password in code or configuration.
 
 5. Run a Full sync first:
 
@@ -164,7 +168,7 @@ Brightspace Sync is currently packaged and tested as a **Windows desktop applica
 The crawler uses a dedicated persistent Chromium profile under:
 
 ```text
-%LOCALAPPDATA%\Brightspace Sync\BrowserProfile\
+%LOCALAPPDATA%\CourseMirror\BrowserProfile\
 ```
 
 If a valid Brightspace/SSO session exists, syncs can usually continue without another login.
@@ -183,7 +187,7 @@ Application files and user data are deliberately separated so a future installer
 Application directory (read-only capable)
   src/, package.json, node_modules/, launchers
 
-%LOCALAPPDATA%\Brightspace Sync\
+%LOCALAPPDATA%\CourseMirror\
   config.json
   BrowserProfile\
   state\
@@ -195,7 +199,7 @@ User-selected location
 
 All commands resolve the application directory from the running module rather than the current terminal directory. The `.cmd`, PowerShell, npm, scheduled, login, sync, and publish entry points all use the same stable launcher and runtime path abstraction.
 
-On first use after upgrading a repo-relative installation, Brightspace Sync copies `config.json`, the dedicated browser profile, and recognized global/publish state into the per-user location when the destination does not already exist. A relative legacy mirror path is converted to an absolute path so it continues to point to the same mirror. Legacy source data is left in place for rollback; migration is idempotent and recorded only under per-user state. See [`docs/WINDOWS_DISTRIBUTION.md`](docs/WINDOWS_DISTRIBUTION.md) for the detailed contract and remaining installer work.
+On first use after the product rename, CourseMirror transactionally copies an existing `%LOCALAPPDATA%\Brightspace Sync` runtime root to `%LOCALAPPDATA%\CourseMirror` when the new root has no meaningful data. Configuration, BrowserProfile, state, and logs are preserved, while the selected school mirror remains in its existing location. The old runtime root is retained for rollback. If both roots contain meaningful data, startup stops with a manual-review conflict instead of merging or overwriting them. Existing repo-relative migration remains supported and idempotent. See [`docs/WINDOWS_DISTRIBUTION.md`](docs/WINDOWS_DISTRIBUTION.md) for the detailed contract.
 
 ## Sync modes
 
@@ -271,12 +275,12 @@ Enabling it requires both an explicit `enabled: true` choice and a destination s
 {
   "drivePublish": {
     "enabled": true,
-    "destination": "G:\\My Drive\\Brightspace Mirror"
+    "destination": "G:\\My Drive\\CourseMirror"
   }
 }
 ```
 
-The intended model is Google Drive for desktop in streaming or mirrored mode. Brightspace Sync copies the local mirror into a mounted Drive path rather than implementing OAuth itself.
+The intended model is Google Drive for desktop in streaming or mirrored mode. CourseMirror copies the local mirror into a mounted Drive path rather than implementing OAuth itself.
 
 The publisher is incremental: it copies new or changed files, leaves unchanged files alone, removes only files it previously published that were later removed locally, does not purge unrelated user files, and verifies tracked files during Full publishing.
 
@@ -303,15 +307,15 @@ Large video/audio binaries are index-only by default. Asset behavior and size li
 
 ## Privacy and safety
 
-Brightspace Sync is designed to avoid submissions, edits, and other intentional state-changing operations. After authentication, the request guard blocks `PUT`, `PATCH`, and `DELETE`, blocks same-origin form/document `POST` requests, and blocks POST endpoints/bodies that look state-changing. Brightspace also uses some POST-based RPC/XHR requests for read operations, so benign read-like POSTs remain allowed.
+CourseMirror is designed to avoid submissions, edits, and other intentional state-changing operations. After authentication, the request guard blocks `PUT`, `PATCH`, and `DELETE`, blocks same-origin form/document `POST` requests, and blocks POST endpoints/bodies that look state-changing. Brightspace also uses some POST-based RPC/XHR requests for read operations, so benign read-like POSTs remain allowed.
 
 That means the project is **read-focused, not mathematically read-only**. Visiting Brightspace pages can still update normal platform metadata such as viewed state or "Last Visited" information.
 
 Never commit or share:
 
-- `%LOCALAPPDATA%\Brightspace Sync\BrowserProfile\` (and legacy `.brightspace-profile/`) — browser cookies, sessions, and potentially saved-login information
+- `%LOCALAPPDATA%\CourseMirror\BrowserProfile\` (and legacy `.brightspace-profile/`) — browser cookies, sessions, and potentially saved-login information
 - the user-selected mirror (and legacy `BrightspaceMirror/`) — private student/course content
-- `%LOCALAPPDATA%\Brightspace Sync\config.json` (and legacy repo `config.json`) — local machine configuration
+- `%LOCALAPPDATA%\CourseMirror\config.json` (and legacy repo `config.json`) — local machine configuration
 - logs or exported data containing private academic information
 
 These paths are ignored by the included `.gitignore`. CI also scans the working tree and full Git history for known credential formats, institution-email/URL patterns, student-ID-like fields, and forbidden sensitive paths. See [SECURITY.md](SECURITY.md) for the full security model.
@@ -352,7 +356,7 @@ A green Windows smoke test proves the packaged Node/Playwright/browser path work
 
 ## Release
 
-Latest stable release: **[v2.4.1](https://github.com/aryanramz/brightspace-sync/releases/tag/v2.4.1)**
+Latest stable release: **[v2.4.1](https://github.com/aryanramz/coursemirror/releases/tag/v2.4.1)**
 
 ## License
 

@@ -1,6 +1,8 @@
-# Windows distribution foundation
+# CourseMirror — for D2L Brightspace: Windows distribution foundation
 
-This milestone prepares Brightspace Sync for a conventional per-machine Windows installation without building the final installer.
+This milestone prepares CourseMirror for a conventional Windows installation without building the final installer. The planned default per-user application location is `%LOCALAPPDATA%\Programs\CourseMirror\`; private runtime data remains separate at `%LOCALAPPDATA%\CourseMirror\`.
+
+CourseMirror is published by **aryanramz** at `https://github.com/aryanramz/coursemirror`. CourseMirror is an unofficial third-party utility for D2L Brightspace. It is not affiliated with or endorsed by D2L Corporation.
 
 ## Storage contract
 
@@ -9,16 +11,16 @@ Application files are treated as immutable. Code, bundled defaults, dependencies
 Per-user private runtime data uses:
 
 ```text
-%LOCALAPPDATA%\Brightspace Sync\
+%LOCALAPPDATA%\CourseMirror\
   config.json                 User configuration
   BrowserProfile\             Chromium cookies and session data
   state\                      Sync, course, publish, lock, and migration state
   logs\                       Reserved application/installer log root
 ```
 
-The mirror is separate and user-selectable through `outputDir`. A blank value resolves to the current user's `Documents\Brightspace Mirror`. Relative paths in the new per-user config resolve from `%LOCALAPPDATA%\Brightspace Sync`; absolute paths are recommended for clarity.
+The mirror is separate and user-selectable through `outputDir`. A blank value resolves to the current user's `Documents\CourseMirror`. Relative paths in the new per-user config resolve from `%LOCALAPPDATA%\CourseMirror`; absolute paths are recommended for clarity.
 
-`BRIGHTSPACE_SYNC_DATA_DIR` can override the normal per-user data root for controlled testing or managed deployments. A non-empty `BRIGHTSPACE_SYNC_MIRROR_DIR` is authoritative for the effective mirror path: it overrides `outputDir` without rewriting the saved configuration. When it is absent, the configured `outputDir` and existing legacy path-preservation behavior apply normally. Neither environment variable is required for a normal install.
+`COURSEMIRROR_DATA_DIR` can override the normal per-user data root for controlled testing or managed deployments. A non-empty `COURSEMIRROR_MIRROR_DIR` is authoritative for the effective mirror path: it overrides `outputDir` without rewriting the saved configuration. The former `BRIGHTSPACE_SYNC_DATA_DIR` and `BRIGHTSPACE_SYNC_MIRROR_DIR` names remain accepted as lower-priority compatibility aliases. When no mirror override is present, the configured `outputDir` and existing legacy path-preservation behavior apply normally. None of these variables is required for a normal install.
 
 ## Configuration schema and persistence
 
@@ -26,15 +28,17 @@ Per-user configuration declares `"configVersion": 1`. A configuration without `c
 
 The v0 → v1 migration retains all known and unknown keys, adds `configVersion`, and removes only settings with an explicit deprecation path such as `profileDir` after its browser-profile migration completes. If a configuration declares a version newer than the application supports, startup stops with a clear upgrade-required error and leaves that file unchanged.
 
-Critical JSON is persisted through same-directory unique temporary files. Brightspace Sync writes and flushes the complete temporary file, closes it, and then replaces the destination by rename. An ordinary write or replacement failure removes the temporary file when possible and leaves the previous valid destination intact. This atomic path is used for `config.json`, `state\runtime-migrations.json`, and the small global, course, and Drive runtime-state files. Ordinary mirror content retains its existing content-aware writer so unchanged mirror files keep their timestamps.
+Critical JSON is persisted through same-directory unique temporary files. CourseMirror writes and flushes the complete temporary file, closes it, and then replaces the destination by rename. An ordinary write or replacement failure removes the temporary file when possible and leaves the previous valid destination intact. This atomic path is used for `config.json`, `state\runtime-migrations.json`, and the small global, course, and Drive runtime-state files. Ordinary mirror content retains its existing content-aware writer so unchanged mirror files keep their timestamps.
 
 ## Initialization serialization
 
-First-run creation and migration are serialized by `state\.brightspace-sync-init.lock`, which is separate from the normal sync/publish lock. `loadAppConfig()` holds the initialization lock while creating or versioning config, migrating the legacy profile and runtime state, and updating the migration log, then releases it in guaranteed cleanup before normal sync or publish work proceeds.
+First-run creation and migration are serialized by `state\.coursemirror-init.lock`, which is separate from the normal sync/publish lock. `loadAppConfig()` holds the initialization lock while creating or versioning config, migrating the legacy profile and runtime state, and updating the migration log, then releases it in guaranteed cleanup before normal sync or publish work proceeds.
 
 A competing process waits for up to 30 seconds and polls every 100 ms by default. A same-host lock whose PID is still running is never removed based on age. A same-host lock with a dead PID is recoverable immediately; malformed or foreign-host locks become recoverable only after one hour. If the bounded wait expires, startup fails with the lock owner and start time instead of stealing the active lock. Because initialization is released before any later operation acquires another lock, the initialization and sync/publish locks do not form a lock-order cycle.
 
 ## Backward compatibility
+
+Before normal initialization, a default Windows installation checks the former `%LOCALAPPDATA%\Brightspace Sync` private runtime root. If it contains meaningful data and `%LOCALAPPDATA%\CourseMirror` does not, the complete config, BrowserProfile, state, and logs tree is copied to a uniquely named staging directory and promoted atomically only after the copy is complete. The old root is never deleted, the selected mirror path is preserved, and the actual school mirror is not moved. A completion marker makes retries idempotent. If both roots contain meaningful independent data, migration stops with a deterministic manual-review conflict rather than merging or overwriting either root. Explicit data-directory overrides do not trigger this automatic product-root migration.
 
 On first run, if the per-user configuration does not yet exist, the runtime looks for a legacy `config.json` beside the application. It copies that config to the new location and converts a relative `outputDir` to the equivalent absolute path.
 
@@ -63,21 +67,21 @@ New configs set `drivePublish.enabled` to `false` and leave `destination` blank.
 
 ## Portable packaged-runtime contract
 
-`npm run build:windows-bundle` creates the intermediate x64 application bundle under `dist\Brightspace Sync`. It is a portable packaging proof, not the public installer or a `Setup.exe`.
+`npm run build:windows-bundle` creates the intermediate x64 application bundle under `dist\CourseMirror`. It is a portable packaging proof, not the public installer or a `Setup.exe`.
 
-The bundle contains a private, checksum-verified Node.js 24.20.0 x64 runtime at `runtime\node.exe`. Node 24 is used because Node 20 reached end of life in March 2026; Node 24 remains supported LTS. The packaged `Brightspace Sync.cmd` resolves both the private runtime and `app\src\launcher.mjs` relative to its own location, so it does not use `node` from `PATH` or depend on the caller's working directory. End users do not need Node.js, npm, Git, or a source checkout, and the launcher does not require PowerShell execution-policy changes.
+The bundle contains a private, checksum-verified Node.js 24.20.0 x64 runtime at `runtime\node.exe`. Node 24 is used because Node 20 reached end of life in March 2026; Node 24 remains supported LTS. The packaged `CourseMirror.cmd` resolves both the private runtime and `app\src\launcher.mjs` relative to its own location, so it does not use `node` from `PATH` or depend on the caller's working directory. End users do not need Node.js, npm, Git, or a source checkout, and the launcher does not require PowerShell execution-policy changes.
 
 The packaged application tree contains only runtime source, the generic example configuration, application/runtime licenses, and locked production dependencies. Playwright's JavaScript runtime is installed with lifecycle scripts and browser downloads disabled. Chromium is not bundled: the current runtime continues to use an installed Edge, Chrome, or Brave browser.
 
 The package layout is:
 
 ```text
-dist\Brightspace Sync\
-  Brightspace Sync.exe
-  Brightspace Sync.exe.config
-  Brightspace Sync Credential Helper.exe
-  Brightspace Sync Credential Helper.exe.config
-  Brightspace Sync.cmd
+dist\CourseMirror\
+  CourseMirror.exe
+  CourseMirror.exe.config
+  CourseMirror Credential Helper.exe
+  CourseMirror Credential Helper.exe.config
+  CourseMirror.cmd
   bundle-manifest.json
   runtime\
     node.exe
@@ -90,7 +94,7 @@ dist\Brightspace Sync\
     node_modules\
 ```
 
-Application files remain immutable at runtime. Configuration, browser session, state, locks, and logs continue to use `%LOCALAPPDATA%\Brightspace Sync`, subject to the existing `BRIGHTSPACE_SYNC_DATA_DIR` override. The mirror remains separate and user-selectable, including through `BRIGHTSPACE_SYNC_MIRROR_DIR`.
+Application files remain immutable at runtime. Configuration, browser session, state, locks, and logs continue to use `%LOCALAPPDATA%\CourseMirror`, subject to the `COURSEMIRROR_DATA_DIR` override. The mirror remains separate and user-selectable, including through `COURSEMIRROR_MIRROR_DIR`.
 
 ## Windows desktop control panel (Milestone 2B.1)
 
@@ -135,7 +139,7 @@ Open Mirror and View Logs use the paths from the status response. C# does not de
 
 ## First-run setup and Settings (Milestone 2B.2)
 
-When `status --json` reports `configured: false`, the control panel automatically opens the shared **Set up Brightspace Sync** form. Cancelling leaves the per-user configuration unconfigured and keeps Quick Sync and Full Sync disabled. Saving does not trigger login or synchronization; it refreshes status and enables sync commands only after Node reports the application configured. The Settings button opens the same form with current values.
+When `status --json` reports `configured: false`, the control panel automatically opens the shared **Set up CourseMirror** form. Cancelling leaves the per-user configuration unconfigured and keeps Quick Sync and Full Sync disabled. Saving does not trigger login or synchronization; it refreshes status and enables sync commands only after Node reports the application configured. The Settings button opens the same form with current values.
 
 The GUI obtains settings from:
 
@@ -145,7 +149,7 @@ runtime\node.exe app\src\launcher.mjs settings --json
 
 Schema version 1 exposes only `configured`, `baseUrl`, the effective `mirrorDir`, `mirrorOverrideActive`, optional Drive `enabled`/`destination` fields, and non-secret authentication availability/enabled flags. It never exposes usernames, passwords, credentials, cookies, tokens, browser-session data, profile contents, or unrelated configuration. Saves use `settings save --json`; the versioned non-secret JSON request is written to standard input and never placed in command-line arguments, environment variables, or logs. Node performs HTTPS URL normalization and validation, validates absolute paths and protected-path separation, merges the supported fields into the existing schema, preserves unexposed settings, and atomically replaces `config.json` under the existing initialization lock.
 
-Fresh setup suggests `Brightspace Sync` under the actual Windows Documents known folder returned by `.NET`, so redirected OneDrive or policy-controlled Documents locations are respected. The user may edit or browse to any suitable absolute school-folder location. Private runtime data remains under the Node-resolved data directory and is never placed inside or moved with the mirror.
+Fresh setup suggests `CourseMirror` under the actual Windows Documents known folder returned by `.NET`, so redirected OneDrive or policy-controlled Documents locations are respected. The user may edit or browse to any suitable absolute school-folder location. Private runtime data remains under the Node-resolved data directory and is never placed inside or moved with the mirror.
 
 Changing a non-empty existing mirror requires an explicit choice:
 
@@ -153,7 +157,7 @@ Changing a non-empty existing mirror requires an explicit choice:
 - **Use new location** updates `outputDir` and deliberately leaves the old mirror untouched.
 - **Cancel** makes no configuration change.
 
-If the old mirror is absent or effectively empty, an ordinary save is sufficient. A `BRIGHTSPACE_SYNC_MIRROR_DIR` environment override remains authoritative: Settings shows the effective path read-only, rejects a misleading different path, and does not rewrite the saved `outputDir`.
+If the old mirror is absent or effectively empty, an ordinary save is sufficient. A `COURSEMIRROR_MIRROR_DIR` environment override remains authoritative: Settings shows the effective path read-only, rejects a misleading different path, and does not rewrite the saved `outputDir`.
 
 Google Drive publishing remains off by default. Enabling **Publish mirror to Google Drive** requires a separate absolute filesystem destination, intended for a Google Drive for desktop folder. Disabling publishing permits an empty destination. This feature uses the existing `drivePublish.enabled` and `drivePublish.destination` keys; it does not add Google OAuth or publish private runtime data.
 
@@ -168,18 +172,18 @@ The primary integration path is the portable bundle:
 ```powershell
 npm run build:windows-bundle
 npm run windows-bundle-selftest
-& '.\dist\Brightspace Sync\Brightspace Sync.exe'
+& '.\dist\CourseMirror\CourseMirror.exe'
 ```
 
-The standalone build output can target an already-built bundle by setting `BRIGHTSPACE_SYNC_DEV_BUNDLE_ROOT` to the absolute `dist\Brightspace Sync` directory before launching it. Normal packaged launches leave this development override unset and locate the private Node runtime relative to the GUI executable.
+The standalone build output can target an already-built bundle by setting `COURSEMIRROR_DEV_BUNDLE_ROOT` to the absolute `dist\CourseMirror` directory before launching it. Normal packaged launches leave this development override unset and locate the private Node runtime relative to the GUI executable.
 
 ## Secure institutional authentication (Milestone 2B.3)
 
-Persistent Chromium-session login remains the generic default. Brightspace Sync never implements a generic password-field search or automatic form filler. Institution-specific automatic sign-in is opt-in and is available only through an explicit adapter; the initial adapter supports the exact Brightspace host `mycourses.stonybrook.edu` and retrieves credentials only after the browser reaches the exact HTTPS SSO origin `https://sso.cc.stonybrook.edu`. HTTP, lookalike, and unexpected hosts stop automatic filling without retrieving a credential.
+Persistent Chromium-session login remains the generic default. CourseMirror never implements a generic password-field search or automatic form filler. Institution-specific automatic sign-in is opt-in and is available only through an explicit adapter; the initial adapter supports the exact Brightspace host `mycourses.stonybrook.edu` and retrieves credentials only after the browser reaches the exact HTTPS SSO origin `https://sso.cc.stonybrook.edu`. HTTP, lookalike, and unexpected hosts stop automatic filling without retrieving a credential.
 
-The Settings form shows **Automatically sign me in when my session expires**, Username, and Password only for the supported Stony Brook site. The password is stored as a Windows Generic Credential under the stable target `Brightspace Sync:institution:stony-brook`; it is never written to `config.json`, the mirror, Drive, state, logs, command arguments, environment variables, or desktop JSON responses. Existing passwords are never displayed. A blank password preserves the saved password only when the username is unchanged; entering a password replaces it. Disabling automatic sign-in or choosing **Remove saved sign-in** deletes the saved credential when Settings is saved. `config.json` stores only the non-secret `auth.automaticLoginEnabled` flag.
+The Settings form shows **Automatically sign me in when my session expires**, Username, and Password only for the supported Stony Brook site. The password is stored as a Windows Generic Credential under the canonical target `CourseMirror:institution:stony-brook`; the former `Brightspace Sync:institution:stony-brook` target remains a read-compatible migration source and is removed after a successful canonical write or deletion. It is never written to `config.json`, the mirror, Drive, state, logs, command arguments, environment variables, or desktop JSON responses. Existing passwords are never displayed. A blank password preserves the saved password only when the username is unchanged; entering a password replaces it. Disabling automatic sign-in or choosing **Remove saved sign-in** deletes the saved credential when Settings is saved. `config.json` stores only the non-secret `auth.automaticLoginEnabled` flag.
 
-The bundled `Brightspace Sync Credential Helper.exe` is a narrowly scoped .NET Framework helper around Windows Credential Manager. The packaged Node process launches it without a console and exchanges a bounded, versioned request through a randomly named local named pipe. Credentials are not placed in process arguments, standard streams, environment variables, or temporary files. Helper failures return a fixed non-secret diagnostic.
+The bundled `CourseMirror Credential Helper.exe` is a narrowly scoped .NET Framework helper around Windows Credential Manager. The packaged Node process launches it without a console and exchanges a bounded, versioned request through a randomly named local named pipe. Credentials are not placed in process arguments, standard streams, environment variables, or temporary files. Helper failures return a fixed non-secret diagnostic.
 
 Normal sync first tests the persistent profile. A valid session continues without opening Credential Manager. The persistent sync browser is always headed so a human login or MFA challenge can be restored reliably; the existing background/headless preference starts that real window minimized, as does automatic institutional sign-in. Ordinary foreground mode is not minimized. When Stony Brook automatic sign-in is enabled, the adapter clicks only the exact recognized institutional SAML handoff on the trusted Brightspace origin. After the browser reaches the exact trusted SSO origin, Node requests the credential, fills only the adapter's exact selectors, submits once, and clears its short-lived credential object. Duo and other human challenges are never bypassed; the minimized browser is restored only when human action is required, and the same session continues after approval.
 
@@ -203,7 +207,9 @@ Automatic sync is off by default and remains an explicit user choice in the shar
 
 The UI accepts a recurrence from 1–24 hours and a Full Sync interval from 1–30 days. A legacy `schedule` object containing only `fullIntervalDays` remains valid in memory with scheduling disabled and the six-hour default; reading it does not rewrite the config, and unknown schedule keys are preserved on save.
 
-When enabled, Brightspace Sync owns exactly one task under `\Brightspace Sync`. Its name is `Scheduled Sync - <current-user-SID>`, derived from the stable Windows security identifier rather than the renameable account name. Each Windows account therefore addresses only its own managed task. It is registered for that same SID with **interactive-token** logon and least privilege, so it runs only while that user is signed in and stores no Windows password. The task does not wake the computer, runs on battery, starts when a missed trigger becomes available, and ignores a second trigger while an instance is already active. Its action contains only the canonical installed `Brightspace Sync.exe` path and the fixed argument `--scheduled-run`; SID, URL, mirror, Drive, credential, and other settings never appear in the action arguments.
+When enabled, CourseMirror owns exactly one task under `\CourseMirror`. Its name is `Scheduled Sync - <current-user-SID>`, derived from the stable Windows security identifier rather than the renameable account name. Each Windows account therefore addresses only its own managed task. It is registered for that same SID with **interactive-token** logon and least privilege, so it runs only while that user is signed in and stores no Windows password. The task does not wake the computer, runs on battery, starts when a missed trigger becomes available, and ignores a second trigger while an instance is already active. Its action contains only the canonical installed `CourseMirror.exe` path and the fixed argument `--scheduled-run`; SID, URL, mirror, Drive, credential, and other settings never appear in the action arguments.
+
+Settings also checks only the current SID's exact former `\Brightspace Sync\Scheduled Sync - <Windows SID>` task. On the next successful scheduling reconciliation it creates or updates the canonical CourseMirror task as requested and removes that exact legacy task. Snapshot/rollback covers both identities; tasks for other SIDs and unrelated tasks are never touched.
 
 `--scheduled-run` is handled before the control-panel mutex or WinForms startup. The WinExe launches the private packaged Node runtime and fixed `scheduled` launcher command without a console, waits for completion, and returns its exit code. Node chooses Full when no successful Full Sync is recorded or the configured Full interval has elapsed; otherwise it chooses Quick. Malformed status is treated conservatively as requiring Full. The existing Node operation lock remains the final concurrency authority, and a scheduled overlap returns a distinct safe status rather than starting a second crawler.
 
@@ -211,11 +217,11 @@ The sync browser remains headed so login or MFA can be completed, but a schedule
 
 Settings treats an enabled schedule, cadence change, or disable operation as one coordinated Task Scheduler/config transaction. It snapshots the current user's exact managed task, applies the requested registration first, then saves config through the existing Node transaction. A required task-registration failure leaves config unchanged; a config failure restores the exact prior task definition. Credential and scheduling changes use the same rollback path, and any incomplete rollback is surfaced as requiring manual review. When config is already disabled, Task Scheduler unavailability does not block unrelated URL, mirror, Drive, or authentication saves. A stale task is safe because the Node scheduled entry point checks `schedule.enabled` before syncing; Settings shows a nonfatal review warning and reconciles the stale task once Task Scheduler becomes available again.
 
-Opening Settings compares the current user's task with the current binary path, cadence, interactive-token logon, least privilege, battery/wake policy, fixed action, and indefinite lifetime policy. `ExecutionTimeLimit` is `PT0S`, repetition has no finite duration, and the trigger has no `EndBoundary`, leaving Brightspace Sync's own operation/authentication timeouts and lock lifecycle authoritative. A finite or otherwise altered task is repaired on the next successful Save. Disabling removes only the current SID's exact managed task and leaves other users' and unrelated Task Scheduler entries untouched.
+Opening Settings compares the current user's task with the current binary path, cadence, interactive-token logon, least privilege, battery/wake policy, fixed action, and indefinite lifetime policy. `ExecutionTimeLimit` is `PT0S`, repetition has no finite duration, and the trigger has no `EndBoundary`, leaving CourseMirror's own operation/authentication timeouts and lock lifecycle authoritative. A finite or otherwise altered task is repaired on the next successful Save. Disabling removes only the current SID's exact managed task and leaves other users' and unrelated Task Scheduler entries untouched.
 
 Scheduled outcomes append to the private Node-resolved `logs\scheduled.log`. The file is bounded to 64 KiB and contains only timestamp, selected mode, exit code, and a fixed high-level category, including `refresh-login-required`. It never contains crawler output, page content, URLs, usernames, credentials, tokens, cookies, or raw errors.
 
-Automated tests use a mock Task Scheduler service to prove idempotent create/update/delete, exact-definition rollback, combined credential rollback, reconciliation, and partial-failure reporting without altering a developer or hosted runner's real task library. The packaged Windows test exercises the actual `Brightspace Sync.exe --scheduled-run` → private Node path with isolated external data and no configured site, proving the no-UI/no-console entry point without contacting Brightspace. A real disposable Task Scheduler registration test is intentionally not part of routine CI because it would mutate host-level scheduled-task state.
+Automated tests use a mock Task Scheduler service to prove idempotent create/update/delete, exact-definition rollback, combined credential rollback, reconciliation, and partial-failure reporting without altering a developer or hosted runner's real task library. The packaged Windows test exercises the actual `CourseMirror.exe --scheduled-run` → private Node path with isolated external data and no configured site, proving the no-UI/no-console entry point without contacting Brightspace. A real disposable Task Scheduler registration test is intentionally not part of routine CI because it would mutate host-level scheduled-task state.
 
 ## Deferred / Later Improvements
 
@@ -251,6 +257,8 @@ The following work remains intentionally deferred to later milestones:
 - uninstall testing
 - code signing
 - optional automatic updates
+
+Future installer metadata must use product name `CourseMirror`, publisher `aryanramz`, default install directory `%LOCALAPPDATA%\Programs\CourseMirror\`, main executable `CourseMirror.exe`, credential helper `CourseMirror Credential Helper.exe`, and setup filename `CourseMirror-<version>-Setup.exe`. The permanent Inno Setup App ID remains `7E264BC7-FCBE-4BF2-9A24-E342C533A770`; it must not change during the rename.
 
 Additional institution adapters and changes required by future SSO page revisions remain later enhancements. Installer, upgrade, repair, uninstall, signing, and release behavior remain part of Milestone 2C.
 

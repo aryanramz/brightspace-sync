@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-echo Brightspace Sync v2.4.1 - ESTABLISH DEDICATED BROWSER SESSION
+echo CourseMirror v2.4.1 - ESTABLISH DEDICATED BROWSER SESSION
 echo.
 where node >nul 2>nul
 if errorlevel 1 (
@@ -9,7 +9,7 @@ if errorlevel 1 (
   exit /b 1
 )
 if not exist node_modules (
-  echo Brightspace Sync runtime dependencies are missing. Run setup.ps1 or reinstall the application.
+  echo CourseMirror runtime dependencies are missing. Run setup.ps1 or reinstall the application.
   goto :error
 )
 node "%~dp0src\launcher.mjs" setup-login

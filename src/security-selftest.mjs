@@ -3,6 +3,22 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const packageMetadata = JSON.parse(await fs.readFile(path.join(ROOT, 'package.json'), 'utf8'));
+if (packageMetadata.name !== 'coursemirror' || packageMetadata.version !== '2.4.1') {
+  throw new Error('Package identity must remain CourseMirror 2.4.1 during the product rename.');
+}
+if (packageMetadata.repository?.url !== 'https://github.com/aryanramz/coursemirror.git') {
+  throw new Error('Package repository metadata must use the canonical CourseMirror repository.');
+}
+const readme = await fs.readFile(path.join(ROOT, 'README.md'), 'utf8');
+const requiredDisclaimer = 'CourseMirror is an unofficial third-party utility for D2L Brightspace. It is not affiliated with or endorsed by D2L Corporation.';
+if (!readme.includes(requiredDisclaimer)) throw new Error('README is missing the CourseMirror third-party disclaimer.');
+if (!readme.includes('CourseMirror — for D2L Brightspace')) throw new Error('README is missing the CourseMirror tagline.');
+if (/github\.com\/aryanramz\/brightspace-sync/i.test(readme)) throw new Error('README still uses the former repository URL.');
+const brightspaceUrlSource = await fs.readFile(path.join(ROOT, 'src', 'brightspace-url.mjs'), 'utf8');
+if (!brightspaceUrlSource.includes('normalizeBrightspaceBaseUrl')) {
+  throw new Error('External D2L Brightspace URL terminology was incorrectly renamed.');
+}
 const ignore = await fs.readFile(path.join(ROOT, '.gitignore'), 'utf8');
 for (const required of ['.brightspace-profile/', 'BrightspaceMirror/', 'config.json', '.env']) {
   if (!ignore.includes(required)) throw new Error(`.gitignore is missing sensitive path: ${required}`);

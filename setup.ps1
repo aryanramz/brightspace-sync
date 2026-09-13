@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-Write-Host "Brightspace Sync setup"
+Write-Host "CourseMirror setup"
 Set-Location $PSScriptRoot
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {

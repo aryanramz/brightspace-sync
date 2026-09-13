@@ -1,6 +1,6 @@
 using System;
 
-namespace BrightspaceSync.ControlPanel
+namespace CourseMirror.ControlPanel
 {
     internal static class ScheduledRunCommand
     {

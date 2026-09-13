@@ -2,7 +2,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const APP_DIRECTORY_NAME = 'Brightspace Sync';
+export const APP_DIRECTORY_NAME = 'CourseMirror';
+export const LEGACY_APP_DIRECTORY_NAME = 'Brightspace Sync';
 
 export function applicationRoot(moduleUrl = import.meta.url) {
   return path.resolve(path.dirname(fileURLToPath(moduleUrl)), '..');
@@ -26,22 +27,27 @@ export function resolveRuntimePaths({
   const platformDataRoot = platform === 'win32'
     ? (env.LOCALAPPDATA || path.join(userHome, 'AppData', 'Local'))
     : (env.XDG_CONFIG_HOME || path.join(userHome, '.config'));
-  const dataDir = absoluteOverride(env.BRIGHTSPACE_SYNC_DATA_DIR, userHome)
+  const dataDirOverride = absoluteOverride(env.COURSEMIRROR_DATA_DIR || env.BRIGHTSPACE_SYNC_DATA_DIR, userHome);
+  const dataDir = dataDirOverride
     || path.join(platformDataRoot, APP_DIRECTORY_NAME);
-  const mirrorDirOverride = absoluteOverride(env.BRIGHTSPACE_SYNC_MIRROR_DIR, userHome);
-  const defaultMirrorDir = path.join(userHome, 'Documents', 'Brightspace Mirror');
+  const mirrorDirOverride = absoluteOverride(env.COURSEMIRROR_MIRROR_DIR || env.BRIGHTSPACE_SYNC_MIRROR_DIR, userHome);
+  const defaultMirrorDir = path.join(userHome, 'Documents', APP_DIRECTORY_NAME);
 
   return {
     appRoot: normalizedAppRoot,
     bundledConfigFile: path.join(normalizedAppRoot, 'config.example.json'),
     legacyConfigFile: path.join(normalizedAppRoot, 'config.json'),
     dataDir,
+    legacyDataDir: platform === 'win32' && !dataDirOverride
+      ? path.join(platformDataRoot, LEGACY_APP_DIRECTORY_NAME)
+      : null,
+    dataDirOverrideActive: Boolean(dataDirOverride),
     configFile: path.join(dataDir, 'config.json'),
     profileDir: path.join(dataDir, 'BrowserProfile'),
     stateDir: path.join(dataDir, 'state'),
     logsDir: path.join(dataDir, 'logs'),
     lockDir: path.join(dataDir, 'state'),
-    initializationLockFile: path.join(dataDir, 'state', '.brightspace-sync-init.lock'),
+    initializationLockFile: path.join(dataDir, 'state', '.coursemirror-init.lock'),
     migrationLogFile: path.join(dataDir, 'state', 'runtime-migrations.json'),
     mirrorDirOverride,
     defaultMirrorDir

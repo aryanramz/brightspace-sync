@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { loadAppConfig } from './config.mjs';
 import { inspectSyncLock } from './sync-lock.mjs';
+import { resolveRuntimePaths } from './runtime-paths.mjs';
 
 export const DESKTOP_STATUS_SCHEMA_VERSION = 1;
 
@@ -43,7 +44,7 @@ function safeOperationLabel(mode) {
     case 'scheduled': return 'Scheduled Sync';
     case 'settings': return 'Settings';
     case 'refresh-login': return 'Refresh Login';
-    default: return 'Brightspace operation';
+    default: return 'CourseMirror operation';
   }
 }
 
@@ -61,7 +62,29 @@ async function applicationVersion(paths) {
 }
 
 export async function getDesktopStatus({ runtime = {} } = {}) {
-  const { config, paths } = await loadAppConfig({ mode: 'full', runtime });
+  let loaded;
+  try {
+    loaded = await loadAppConfig({ mode: 'full', runtime });
+  } catch (error) {
+    if (error?.code !== 'product-runtime-migration-conflict') throw error;
+    const paths = resolveRuntimePaths(runtime);
+    return {
+      schemaVersion: DESKTOP_STATUS_SCHEMA_VERSION,
+      appVersion: await applicationVersion(paths),
+      status: 'error',
+      configExists: await isFile(paths.configFile),
+      configured: false,
+      baseUrlConfigured: false,
+      mirrorDir: '',
+      logsDir: paths.logsDir,
+      dataDir: paths.dataDir,
+      profileExists: await isDirectory(paths.profileDir),
+      lastSync: null,
+      activeOperation: null,
+      attention: `CourseMirror found private data in both ${error.legacyDataDir} and ${error.dataDir}. Automatic migration stopped; manual review is required.`
+    };
+  }
+  const { config, paths } = loaded;
   const [appVersion, configExists, profileExists, state, operation] = await Promise.all([
     applicationVersion(paths),
     isFile(paths.configFile),
@@ -83,6 +106,7 @@ export async function getDesktopStatus({ runtime = {} } = {}) {
     dataDir: paths.dataDir,
     profileExists,
     lastSync: normalizedTimestamp(state?.lastSuccessfulSync),
-    activeOperation: operation
+    activeOperation: operation,
+    attention: null
   };
 }

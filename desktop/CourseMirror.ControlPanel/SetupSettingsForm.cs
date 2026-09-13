@@ -1,4 +1,4 @@
-using BrightspaceSync.Security;
+using CourseMirror.Security;
 using System;
 using System.Drawing;
 using System.IO;
@@ -6,7 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-namespace BrightspaceSync.ControlPanel
+namespace CourseMirror.ControlPanel
 {
     internal interface ISettingsDialogService
     {
@@ -20,7 +20,7 @@ namespace BrightspaceSync.ControlPanel
             DesktopSettings settings = await backend.GetSettingsAsync();
             using (var form = new SetupSettingsForm(
                 backend, settings, firstRun, new WindowsFolderPicker(),
-                new WindowsCredentialStore(), new WindowsTaskSchedulerService()))
+                new CompatibleCredentialStore(new WindowsCredentialStore()), new WindowsTaskSchedulerService()))
                 return form.ShowDialog(owner) == DialogResult.OK;
         }
     }
@@ -90,7 +90,7 @@ namespace BrightspaceSync.ControlPanel
             _mirrorOverrideActive = settings.mirrorOverrideActive;
             _committedSchedule = CopySchedule(settings.schedule);
 
-            Text = firstRun ? "Set up Brightspace Sync" : "Brightspace Sync Settings";
+            Text = firstRun ? "Set up CourseMirror" : "CourseMirror Settings";
             StartPosition = FormStartPosition.CenterParent;
             ClientSize = new Size(590, 585);
             MinimumSize = new Size(606, 624);
@@ -103,7 +103,7 @@ namespace BrightspaceSync.ControlPanel
             var title = new Label
             {
                 AutoSize = true,
-                Text = firstRun ? "Set up Brightspace Sync" : "Settings",
+                Text = firstRun ? "Set up CourseMirror" : "Settings",
                 Font = new Font("Segoe UI Semibold", 16F, FontStyle.Bold, GraphicsUnit.Point),
                 ForeColor = Color.FromArgb(34, 54, 74),
                 Location = new Point(22, 18)
@@ -211,7 +211,7 @@ namespace BrightspaceSync.ControlPanel
         internal static string SuggestedFirstRunMirror()
         {
             string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            return Path.GetFullPath(Path.Combine(documents, "Brightspace Sync"));
+            return Path.GetFullPath(Path.Combine(documents, "CourseMirror"));
         }
 
         internal SettingsSaveRequest RequestForSelfTest()
@@ -434,7 +434,7 @@ namespace BrightspaceSync.ControlPanel
 
             _scheduleEnabled.AutoSize = true;
             _scheduleEnabled.Location = new Point(14, 22);
-            _scheduleEnabled.Text = "Run Brightspace Sync automatically while I am signed in";
+            _scheduleEnabled.Text = "Run CourseMirror automatically while I am signed in";
             _scheduleEnabled.Checked = schedule.enabled;
             _scheduleEnabled.CheckedChanged += delegate { UpdateScheduleControls(); };
 

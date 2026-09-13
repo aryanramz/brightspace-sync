@@ -5,6 +5,7 @@ import { resolveConfiguredPath, resolveRuntimePaths } from './runtime-paths.mjs'
 import { acquireInitializationLock, initializationLockError } from './init-lock.mjs';
 import { normalizeBrightspaceBaseUrl } from './brightspace-url.mjs';
 import { normalizeScheduleConfig } from './schedule-config.mjs';
+import { migrateLegacyProductRuntime } from './product-migration.mjs';
 
 export const CURRENT_CONFIG_VERSION = 1;
 
@@ -119,7 +120,7 @@ function parsedConfigVersion(raw, file) {
   }
   if (version > CURRENT_CONFIG_VERSION) {
     throw new Error(
-      `Configuration version ${version} in ${file} is newer than this application supports (${CURRENT_CONFIG_VERSION}). Upgrade Brightspace Sync before using this configuration.`
+      `Configuration version ${version} in ${file} is newer than this application supports (${CURRENT_CONFIG_VERSION}). Upgrade CourseMirror before using this configuration.`
     );
   }
   return version;
@@ -208,8 +209,8 @@ async function migrateLegacyState(outputDir, paths, actions) {
   }
 }
 
-export async function loadAppConfigUnderLock({ mode, paths }) {
-  const actions = [];
+export async function loadAppConfigUnderLock({ mode, paths, initialActions = [] }) {
+  const actions = [...initialActions];
   let raw = await prepareUserConfig(paths, actions);
   raw = await migrateConfigToCurrent(raw, paths, actions);
 
@@ -285,10 +286,15 @@ export async function loadAppConfigUnderLock({ mode, paths }) {
 
 export async function loadAppConfig({ mode = 'full', runtime = {}, initializationLock = {} } = {}) {
   const paths = resolveRuntimePaths(runtime);
+  const productMigration = await migrateLegacyProductRuntime(paths);
   const lock = await acquireInitializationLock(paths, initializationLock);
   if (!lock.acquired) throw initializationLockError(lock);
   try {
-    return await loadAppConfigUnderLock({ mode, paths });
+    return await loadAppConfigUnderLock({
+      mode,
+      paths,
+      initialActions: productMigration.action ? [productMigration.action] : []
+    });
   } finally {
     await lock.release();
   }
@@ -297,10 +303,15 @@ export async function loadAppConfig({ mode = 'full', runtime = {}, initializatio
 export async function withUserConfigTransaction({ mode = 'full', runtime = {}, initializationLock = {}, writeConfig = writeJsonAtomic, execute }) {
   if (typeof execute !== 'function') throw new Error('A configuration transaction callback is required.');
   const paths = resolveRuntimePaths(runtime);
+  const productMigration = await migrateLegacyProductRuntime(paths);
   const lock = await acquireInitializationLock(paths, initializationLock);
   if (!lock.acquired) throw initializationLockError(lock);
   try {
-    const loaded = await loadAppConfigUnderLock({ mode, paths });
+    const loaded = await loadAppConfigUnderLock({
+      mode,
+      paths,
+      initialActions: productMigration.action ? [productMigration.action] : []
+    });
     const raw = await readConfigJson(paths.configFile, 'user configuration');
     return await execute({
       ...loaded,

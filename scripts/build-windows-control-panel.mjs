@@ -5,9 +5,9 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PROJECT_DIR = path.join(ROOT, 'desktop', 'BrightspaceSync.ControlPanel');
+const PROJECT_DIR = path.join(ROOT, 'desktop', 'CourseMirror.ControlPanel');
 const OUTPUT_DIR = path.join(PROJECT_DIR, 'bin', 'Release');
-const OUTPUT_EXE = path.join(OUTPUT_DIR, 'Brightspace Sync.exe');
+const OUTPUT_EXE = path.join(OUTPUT_DIR, 'CourseMirror.exe');
 const OUTPUT_CONFIG = `${OUTPUT_EXE}.config`;
 const SOURCE_FILES = [
   'BackendDiagnosticSanitizer.cs',
@@ -70,7 +70,7 @@ async function build() {
   const manifest = path.join(PROJECT_DIR, 'app.manifest');
   const appConfig = path.join(PROJECT_DIR, 'App.config');
   for (const [file, label] of [
-    [path.join(PROJECT_DIR, 'BrightspaceSync.ControlPanel.csproj'), 'WinForms project'],
+    [path.join(PROJECT_DIR, 'CourseMirror.ControlPanel.csproj'), 'WinForms project'],
     [manifest, 'application manifest'],
     [appConfig, 'application configuration'],
     ...SOURCE_FILES.map(name => [path.join(PROJECT_DIR, name), `control-panel source ${name}`])
@@ -94,7 +94,7 @@ async function build() {
     ...SOURCE_FILES.map(name => path.join(PROJECT_DIR, name))
   ]);
   await fs.copyFile(appConfig, OUTPUT_CONFIG);
-  await requireFile(OUTPUT_EXE, 'compiled Brightspace Sync control panel');
+  await requireFile(OUTPUT_EXE, 'compiled CourseMirror control panel');
   await requireFile(OUTPUT_CONFIG, 'compiled control-panel runtime configuration');
   console.log(`Windows control panel created: ${OUTPUT_EXE}`);
 }

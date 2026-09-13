@@ -85,7 +85,7 @@ async function runSync(mode, config, { scheduledRun = false } = {}) {
   }
 
   const startedAt = new Date();
-  console.log(`Brightspace Sync v${APP_VERSION} — ${mode.toUpperCase()} mode`);
+  console.log(`CourseMirror v${APP_VERSION} — ${mode.toUpperCase()} mode`);
   console.log(`Brightspace: ${config.baseUrl}`);
   console.log(`Mirror:      ${config.outputDir}`);
   console.log(`Schema:      v${MIRROR_SCHEMA_VERSION} term-scoped`);
@@ -293,8 +293,8 @@ async function main() {
   await ensureDir(paths.lockDir);
   const lock = await acquireSyncLock(paths.lockDir, { mode });
   if (!lock.acquired) {
-    console.log(`Brightspace Sync v${APP_VERSION} — ${mode.toUpperCase()} mode`);
-    console.log(`Another Brightspace operation is already running: ${describeActiveLock(lock)}.`);
+    console.log(`CourseMirror v${APP_VERSION} — ${mode.toUpperCase()} mode`);
+    console.log(`Another CourseMirror operation is already running: ${describeActiveLock(lock)}.`);
     console.log('This run was skipped to protect the mirror from overlapping writes.');
     if (scheduledRun) process.exitCode = 3;
     return;

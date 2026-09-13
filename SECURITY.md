@@ -1,10 +1,11 @@
 # Security and release checklist
 
-Brightspace Sync operates inside an authenticated student session. Treat local browser state and mirrored course data as sensitive.
+CourseMirror operates inside an authenticated student session. Treat local browser state and mirrored course data as sensitive.
 
 ## Never commit
 
-- `%LOCALAPPDATA%\Brightspace Sync\` or copies of its contents
+- `%LOCALAPPDATA%\CourseMirror\` or copies of its contents
+- the retained legacy `%LOCALAPPDATA%\Brightspace Sync\` runtime root after product-name migration
 - `.brightspace-profile/`
 - `BrightspaceMirror/`
 - `config.json`
@@ -18,9 +19,9 @@ The crawler reuses a dedicated persistent Chromium profile. Supported Windows au
 
 Passwords are not required in `config.json` or environment variables. Browser password-manager assistance is optional and best-effort; normal SSO/MFA remains the supported fallback.
 
-Brightspace Sync does not export Playwright `storageState` to a separate plaintext JSON file. Session persistence stays inside the dedicated Chromium profile at `%LOCALAPPDATA%\Brightspace Sync\BrowserProfile`. If the legacy `_brightspace-auth-state.json` file from v2.4.0 exists, the crawler removes it automatically. The browser profile itself remains sensitive and should be protected like any authenticated browser profile.
+CourseMirror does not export Playwright `storageState` to a separate plaintext JSON file. Session persistence stays inside the dedicated Chromium profile at `%LOCALAPPDATA%\CourseMirror\BrowserProfile`. If the legacy `_brightspace-auth-state.json` file from v2.4.0 exists, the crawler removes it automatically. The browser profile itself remains sensitive and should be protected like any authenticated browser profile.
 
-Configuration, session data, runtime state, locks, and the reserved log location are outside the application directory under `%LOCALAPPDATA%\Brightspace Sync`. The mirror remains in a location selected by the user. Legacy repo-relative data is copied, not deleted, during the installer-foundation migration so an older checkout can still be used for rollback; users should remove the legacy copy manually only after they are satisfied with the migration.
+Configuration, session data, runtime state, locks, and the reserved log location are outside the application directory under `%LOCALAPPDATA%\CourseMirror`. The mirror remains in a location selected by the user. Product-name and repo-relative migrations copy rather than delete legacy private data so rollback remains possible. If both old and new product runtime roots contain meaningful data, CourseMirror stops for manual review instead of merging them. Users should remove a legacy copy manually only after they are satisfied with the migration.
 
 ## Read-focused write protection
 
