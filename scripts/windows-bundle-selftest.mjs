@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE_BUNDLE = path.join(ROOT, 'dist', 'CourseMirror');
 const TEXT_EXTENSIONS = new Set(['.cmd', '.config', '.json', '.mjs', '.js', '.cjs', '.txt', '.md', '.xml']);
+const sourcePackage = JSON.parse(await fs.readFile(path.join(ROOT, 'package.json'), 'utf8'));
 
 async function requireFile(file, label) {
   let stat;
@@ -19,6 +20,31 @@ async function requireFile(file, label) {
 async function canonicalWindowsPath(value) {
   // Resolve filesystem aliases (including DOS 8.3 names), not just path syntax.
   return (await fs.realpath(value)).toLowerCase();
+}
+
+function normalizeFourPartVersion(value, label) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?$/.exec(String(value).trim());
+  assert.ok(match, `${label} is not a numeric Windows version: ${value}`);
+  return `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}.${Number(match[4] ?? 0)}`;
+}
+
+async function readManagedBinaryVersions(powershell, binary, { cwd, env, label }) {
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    '$binary = $env:COURSEMIRROR_BINARY_VERSION_PATH',
+    '$info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($binary)',
+    '$assembly = [System.Reflection.AssemblyName]::GetAssemblyName($binary).Version.ToString()',
+    "[Console]::Out.Write(($assembly, $info.FileVersion, $info.ProductVersion -join '|'))"
+  ].join('; ');
+  const result = await run(powershell, ['-NoProfile', '-NonInteractive', '-Command', command], {
+    cwd,
+    env: { ...env, COURSEMIRROR_BINARY_VERSION_PATH: binary },
+    label
+  });
+  assert.equal(result.code, 0, `${label} failed: ${result.stderr}`);
+  const [assemblyVersion, fileVersion, productVersion, ...extra] = result.stdout.split('|');
+  assert.equal(extra.length, 0, `${label} returned unexpected output`);
+  return { assemblyVersion, fileVersion, productVersion };
 }
 
 async function run(command, args, { cwd, env, label }) {
@@ -110,16 +136,24 @@ const systemRoot = process.env.SystemRoot || process.env.WINDIR;
 if (!systemRoot) throw new Error('SystemRoot is unavailable; cannot construct the isolated Windows system PATH.');
 const system32 = path.join(systemRoot, 'System32');
 const systemComSpec = path.join(system32, 'cmd.exe');
+const windowsPowerShell = path.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 const isolatedSystemPath = [system32, systemRoot].join(path.delimiter);
 await requireFile(systemComSpec, 'Windows command processor');
+await requireFile(windowsPowerShell, 'Windows PowerShell');
 await requireFile(path.join(SOURCE_BUNDLE, 'CourseMirror.cmd'), 'built launcher');
 await requireFile(path.join(SOURCE_BUNDLE, 'CourseMirror.exe'), 'compiled Windows control panel');
 await requireFile(path.join(SOURCE_BUNDLE, 'CourseMirror.exe.config'), 'Windows control-panel runtime configuration');
 await requireFile(path.join(SOURCE_BUNDLE, 'CourseMirror Credential Helper.exe'), 'Windows credential helper');
 await requireFile(path.join(SOURCE_BUNDLE, 'CourseMirror Credential Helper.exe.config'), 'Windows credential-helper runtime configuration');
+await requireFile(path.join(SOURCE_BUNDLE, 'LICENSE'), 'bundle-root project license');
 await requireFile(path.join(SOURCE_BUNDLE, 'runtime', 'node.exe'), 'private Node.js runtime');
 await requireFile(path.join(SOURCE_BUNDLE, 'app', 'src', 'launcher.mjs'), 'packaged application launcher');
 await requireFile(path.join(SOURCE_BUNDLE, 'app', 'node_modules', 'playwright', 'package.json'), 'packaged Playwright dependency');
+assert.deepEqual(
+  await fs.readFile(path.join(SOURCE_BUNDLE, 'LICENSE')),
+  await fs.readFile(path.join(SOURCE_BUNDLE, 'app', 'LICENSE')),
+  'bundle-root and packaged application licenses must match'
+);
 
 const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'coursemirror-windows-bundle-selftest-'));
 try {
@@ -150,12 +184,12 @@ try {
   assert.deepEqual(manifest.application, {
     name: 'CourseMirror',
     packageName: 'coursemirror',
-    version: '2.4.1',
+    version: sourcePackage.version,
     publisher: 'aryanramz',
     repository: 'https://github.com/aryanramz/coursemirror'
   });
   assert.equal(packagedApplication.name, 'coursemirror');
-  assert.equal(packagedApplication.version, '2.4.1');
+  assert.equal(packagedApplication.version, sourcePackage.version);
   assert.equal(packagedApplication.author, 'aryanramz');
   assert.equal(packagedApplication.repository?.url, 'https://github.com/aryanramz/coursemirror.git');
   assert.equal(packagedApplication.homepage, 'https://github.com/aryanramz/coursemirror#readme');
@@ -173,6 +207,20 @@ try {
     TEMP: browserTempDir,
     TMP: browserTempDir
   };
+  const expectedWindowsVersion = `${sourcePackage.version}.0`;
+  for (const [label, binary] of [
+    ['packaged control-panel version probe', controlPanel],
+    ['packaged credential-helper version probe', credentialHelper]
+  ]) {
+    const versions = await readManagedBinaryVersions(windowsPowerShell, binary, {
+      cwd: unrelatedCwd,
+      env: isolatedEnv,
+      label
+    });
+    assert.equal(normalizeFourPartVersion(versions.assemblyVersion, `${label} assembly version`), expectedWindowsVersion);
+    assert.equal(normalizeFourPartVersion(versions.fileVersion, `${label} file version`), expectedWindowsVersion);
+    assert.equal(normalizeFourPartVersion(versions.productVersion, `${label} product version`), expectedWindowsVersion);
+  }
   const browserEnv = {
     ...process.env,
     PATH: isolatedSystemPath,

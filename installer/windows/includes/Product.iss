@@ -1,0 +1,8 @@
+#define ProductName "CourseMirror"
+#define ProductPublisher "aryanramz"
+#define ProductAppId "{{7E264BC7-FCBE-4BF2-9A24-E342C533A770}"
+#define ProductExecutable "CourseMirror.exe"
+#define ProductRepositoryUrl "https://github.com/aryanramz/coursemirror"
+#define ProductSupportUrl "https://github.com/aryanramz/coursemirror/issues"
+#define ProductUpdatesUrl "https://github.com/aryanramz/coursemirror/releases"
+#define DotNet48DownloadUrl "https://dotnet.microsoft.com/en-us/download/dotnet-framework/net48"

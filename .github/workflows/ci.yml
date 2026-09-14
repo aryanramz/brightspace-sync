@@ -72,6 +72,9 @@ jobs:
       - name: Security self-test
         run: npm run security-selftest
 
+      - name: Windows installer foundation self-test
+        run: npm run installer-foundation-selftest
+
   dependency-security:
     runs-on: ubuntu-latest
     steps:
@@ -179,3 +182,41 @@ jobs:
 
       - name: Verify private runtime and source-checkout independence
         run: npm run windows-bundle-selftest
+
+      - name: Verify installer source and failure contracts
+        run: npm run installer-foundation-selftest
+
+      - name: Provision verified Inno Setup 7.1.0 x64
+        shell: pwsh
+        run: .\scripts\provision-inno-setup-ci.ps1
+
+      - name: Build Windows development installer
+        run: npm run build:windows-installer
+
+      - name: Independently verify installer artifacts
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $name = "CourseMirror-$version-Setup.exe"
+          $installer = Join-Path $PWD "dist\installer\$name"
+          $sidecar = "$installer.sha256"
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "Installer is missing: $installer" }
+          if (-not (Test-Path -LiteralPath $sidecar -PathType Leaf)) { throw "Checksum is missing: $sidecar" }
+          $actualSha = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expectedLine = "$actualSha  $name"
+          if ((Get-Content -LiteralPath $sidecar -Raw) -cne $expectedLine) { throw 'Installer checksum sidecar is invalid.' }
+          $actualVersion = [Version](Get-Item -LiteralPath $installer).VersionInfo.ProductVersion
+          $expectedVersion = [Version]$version
+          if ($actualVersion.Major -ne $expectedVersion.Major -or
+              $actualVersion.Minor -ne $expectedVersion.Minor -or
+              $actualVersion.Build -ne $expectedVersion.Build) {
+            throw "Installer product version mismatch: expected $version, found $actualVersion."
+          }
+
+      - name: Upload development installer for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: coursemirror-installer-development
+          path: dist/installer/*
+          if-no-files-found: error
+          retention-days: 7

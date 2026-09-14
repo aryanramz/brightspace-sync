@@ -1,5 +1,6 @@
 # Unreleased — Windows distribution foundations
 
+- Added the Milestone 2C.1 per-user Windows installer build foundation, pinned to verified Inno Setup 7.1.0 x64 and producing a versioned setup executable plus SHA-256 sidecar.
 - Renamed the product to CourseMirror while retaining D2L Brightspace terminology for the external LMS integration.
 - Added safe compatibility for the prior private runtime root, credential target, scheduled-task namespace, and desktop mutex.
 - Separated immutable application files from per-user configuration, browser session, operational state, locks, and log storage under `%LOCALAPPDATA%\CourseMirror`.
@@ -10,7 +11,7 @@
 - Kept Google Drive publishing disabled for new users and removed the assumed Drive destination; publishing now requires an explicit enable choice and destination.
 - Added cross-platform runtime path/migration tests and CI coverage.
 
-The final Windows installer is intentionally not part of this milestone. See `docs/WINDOWS_DISTRIBUTION.md` for the completed foundation and remaining packaging work.
+Installer lifecycle, signing, qualification, and public release automation remain intentionally deferred. See `docs/WINDOWS_DISTRIBUTION.md` for the completed foundation and remaining work.
 
 ---
 

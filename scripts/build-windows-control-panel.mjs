@@ -3,6 +3,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createTemporaryAssemblyVersionSource } from './windows-assembly-version.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PROJECT_DIR = path.join(ROOT, 'desktop', 'CourseMirror.ControlPanel');
@@ -82,21 +83,27 @@ async function build() {
 
   const references = ['System.dll', 'System.Core.dll', 'System.Drawing.dll', 'System.Web.Extensions.dll', 'System.Windows.Forms.dll', 'Microsoft.CSharp.dll']
     .map(name => `/reference:${path.join(frameworkDir, name)}`);
-  await run(compiler, [
-    '/nologo',
-    '/target:winexe',
-    '/platform:anycpu',
-    '/optimize+',
-    '/debug-',
-    `/out:${OUTPUT_EXE}`,
-    `/win32manifest:${manifest}`,
-    ...references,
-    ...SOURCE_FILES.map(name => path.join(PROJECT_DIR, name))
-  ]);
+  const generatedVersion = await createTemporaryAssemblyVersionSource(ROOT, 'control-panel');
+  try {
+    await run(compiler, [
+      '/nologo',
+      '/target:winexe',
+      '/platform:anycpu',
+      '/optimize+',
+      '/debug-',
+      `/out:${OUTPUT_EXE}`,
+      `/win32manifest:${manifest}`,
+      ...references,
+      ...SOURCE_FILES.map(name => path.join(PROJECT_DIR, name)),
+      generatedVersion.sourceFile
+    ]);
+  } finally {
+    await generatedVersion.cleanup();
+  }
   await fs.copyFile(appConfig, OUTPUT_CONFIG);
   await requireFile(OUTPUT_EXE, 'compiled CourseMirror control panel');
   await requireFile(OUTPUT_CONFIG, 'compiled control-panel runtime configuration');
-  console.log(`Windows control panel created: ${OUTPUT_EXE}`);
+  console.log(`Windows control panel ${generatedVersion.packageVersion} created: ${OUTPUT_EXE}`);
 }
 
 build().catch(error => {

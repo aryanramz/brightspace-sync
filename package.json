@@ -38,7 +38,9 @@
     "build:windows-control-panel": "node scripts/build-windows-control-panel.mjs",
     "build:windows-credential-helper": "node scripts/build-windows-credential-helper.mjs",
     "build:windows-bundle": "node scripts/build-windows-bundle.mjs",
+    "build:windows-installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-installer.ps1",
     "windows-bundle-selftest": "node scripts/windows-bundle-selftest.mjs",
+    "installer-foundation-selftest": "node scripts/installer-foundation-selftest.mjs",
     "security-selftest": "node src/security-selftest.mjs"
   },
   "dependencies": {
