@@ -33,7 +33,6 @@ DisableProgramGroupPage=yes
 UsePreviousAppDir=no
 UsePreviousGroup=no
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=none
 SetupArchitecture=x64
 ArchitecturesAllowed=x64compatible and not arm64
 MinVersion=10.0.19045
