@@ -92,6 +92,31 @@ function Assert-VersionMatch([string]$Label, [string]$Actual, [string]$Expected)
     }
 }
 
+function Get-NormalizedFourPartVersion([string]$Value, [string]$Field, [string]$Label) {
+    try { $parsed = [Version]$Value }
+    catch { throw "Packaged Windows binary $Field metadata is invalid for ${Label}." }
+    if ($parsed.Build -lt 0) { throw "Packaged Windows binary $Field metadata is incomplete for ${Label}." }
+    $revision = if ($parsed.Revision -lt 0) { 0 } else { $parsed.Revision }
+    return '{0}.{1}.{2}.{3}' -f $parsed.Major, $parsed.Minor, $parsed.Build, $revision
+}
+
+function Assert-PackagedBinaryVersion([string]$Path, [string]$Label, [string]$Expected) {
+    $expectedFourPart = "$Expected.0"
+    try { $assemblyVersion = [System.Reflection.AssemblyName]::GetAssemblyName($Path).Version.ToString() }
+    catch { throw "Packaged Windows binary assembly metadata could not be read for ${Label}." }
+    $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($Path)
+    $actualVersions = @(
+        @{ Field = 'assembly version'; Value = Get-NormalizedFourPartVersion $assemblyVersion 'assembly version' $Label },
+        @{ Field = 'file version'; Value = Get-NormalizedFourPartVersion ([string]$versionInfo.FileVersion) 'file version' $Label },
+        @{ Field = 'product version'; Value = Get-NormalizedFourPartVersion ([string]$versionInfo.ProductVersion) 'product version' $Label }
+    )
+    foreach ($actual in $actualVersions) {
+        if ($actual.Value -cne $expectedFourPart) {
+            throw "Packaged Windows binary version mismatch for ${Label}: expected $Expected ($expectedFourPart), $($actual.Field) is $($actual.Value)."
+        }
+    }
+}
+
 function Get-Sha256([string]$Path) {
     $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
     try {
@@ -193,6 +218,9 @@ if ([string]$manifest.desktopEntrypoint -ne 'CourseMirror.exe' -or
     [string]$manifest.runtime.architecture -ne 'x64') {
     throw 'Portable bundle entrypoint or runtime architecture metadata is not installable by the x64 CourseMirror setup.'
 }
+
+Assert-PackagedBinaryVersion (Join-Path $bundleRoot 'CourseMirror.exe') 'CourseMirror.exe' $appVersion
+Assert-PackagedBinaryVersion (Join-Path $bundleRoot 'CourseMirror Credential Helper.exe') 'CourseMirror Credential Helper.exe' $appVersion
 
 $licenseHash = Get-Sha256 $licenseFile
 foreach ($bundledLicense in @((Join-Path $bundleRoot 'LICENSE'), (Join-Path $bundleRoot 'app\LICENSE'))) {

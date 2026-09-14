@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const SOURCE_BUNDLE = path.join(ROOT, 'dist', 'CourseMirror');
 const EXPECTED_APP_ID = '7E264BC7-FCBE-4BF2-9A24-E342C533A770';
 const EXPECTED_INNO_VERSION = '7.1.0';
 const EXPECTED_INNO_SHA256 = '0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40df2f';
@@ -18,6 +19,9 @@ const productInclude = await read('installer/windows/includes/Product.iss');
 const assetsReadme = await read('installer/windows/assets/README.md');
 const buildScript = await read('scripts/build-windows-installer.ps1');
 const provisionScript = await read('scripts/provision-inno-setup-ci.ps1');
+const assemblyVersionSource = await read('scripts/windows-assembly-version.mjs');
+const controlPanelAssemblyInfo = await read('desktop/CourseMirror.ControlPanel/Properties/AssemblyInfo.cs');
+const credentialHelperAssemblyInfo = await read('desktop/CourseMirror.CredentialHelper/Properties/AssemblyInfo.cs');
 const workflow = await read('.github/workflows/ci.yml');
 
 assert.equal(packageJson.name, 'coursemirror');
@@ -25,6 +29,16 @@ assert.equal(packageJson.version, '2.4.1', '2C.1 must not bump the application t
 assert.equal(packageJson.scripts['build:windows-installer'], 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-installer.ps1');
 assert.equal(packageJson.scripts['installer-foundation-selftest'], 'node scripts/installer-foundation-selftest.mjs');
 assert.match(assetsReadme, /default artwork/i);
+for (const [label, source] of [
+  ['control-panel AssemblyInfo', controlPanelAssemblyInfo],
+  ['credential-helper AssemblyInfo', credentialHelperAssemblyInfo]
+]) {
+  assert.doesNotMatch(source, /Assembly(?:Version|FileVersion|InformationalVersion)\s*\(\s*"\d/, `${label} must not contain an independent numeric version`);
+}
+assert.match(assemblyVersionSource, /package\.json/);
+assert.match(assemblyVersionSource, /AssemblyVersion\(\"\$\{assemblyVersion\}\"\)/);
+assert.match(assemblyVersionSource, /AssemblyFileVersion\(\"\$\{assemblyVersion\}\"\)/);
+assert.match(assemblyVersionSource, /AssemblyInformationalVersion\(\"\$\{packageVersion\}\"\)/);
 
 assert.match(productInclude, new RegExp(`#define ProductAppId "\\{\\{${EXPECTED_APP_ID.replaceAll('-', '\\-')}\\}"`));
 assert.match(productInclude, /#define ProductName "CourseMirror"/);
@@ -57,6 +71,8 @@ assert.match(buildScript, /\$env:ISCC_PATH/);
 assert.match(buildScript, /package\.json/);
 assert.match(buildScript, /dist\\CourseMirror/);
 assert.match(buildScript, /bundle-manifest\.json/);
+assert.match(buildScript, /Assert-PackagedBinaryVersion \(Join-Path \$bundleRoot 'CourseMirror\.exe'\)/);
+assert.match(buildScript, /Assert-PackagedBinaryVersion \(Join-Path \$bundleRoot 'CourseMirror Credential Helper\.exe'\)/);
 assert.match(buildScript, /System\.Security\.Cryptography\.SHA256/);
 assert.match(buildScript, /\$checksumLine = "\$sha256  \$\(\[System\.IO\.Path\]::GetFileName\(\$installerFile\)\)"/);
 assert.match(buildScript, /\$installerBaseName = "\$ProductName-\$appVersion-Setup"/);
@@ -95,13 +111,17 @@ async function writeJson(file, value) {
   await fs.writeFile(file, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
-async function createSyntheticRepository(root, { bundle = true, manifestVersion = packageJson.version } = {}) {
+async function createSyntheticRepository(root, {
+  bundle = true,
+  packageVersion = packageJson.version,
+  manifestVersion = packageVersion
+} = {}) {
   await fs.mkdir(path.join(root, 'scripts'), { recursive: true });
   await fs.mkdir(path.join(root, 'installer', 'windows'), { recursive: true });
   await fs.copyFile(path.join(ROOT, 'scripts', 'build-windows-installer.ps1'), path.join(root, 'scripts', 'build-windows-installer.ps1'));
   await fs.copyFile(path.join(ROOT, 'installer', 'windows', 'CourseMirror.iss'), path.join(root, 'installer', 'windows', 'CourseMirror.iss'));
   await fs.writeFile(path.join(root, 'LICENSE'), 'synthetic MIT license fixture\n', 'utf8');
-  await writeJson(path.join(root, 'package.json'), { name: 'coursemirror', version: packageJson.version });
+  await writeJson(path.join(root, 'package.json'), { name: 'coursemirror', version: packageVersion });
   if (!bundle) return;
 
   const bundleRoot = path.join(root, 'dist', 'CourseMirror');
@@ -118,12 +138,16 @@ async function createSyntheticRepository(root, { bundle = true, manifestVersion 
   for (const relative of files) {
     const target = path.join(bundleRoot, ...relative.split('/'));
     await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.writeFile(target, 'fixture\n', 'utf8');
+    if (relative === 'CourseMirror.exe' || relative === 'CourseMirror Credential Helper.exe') {
+      await fs.copyFile(path.join(SOURCE_BUNDLE, relative), target);
+    } else {
+      await fs.writeFile(target, 'fixture\n', 'utf8');
+    }
   }
   const license = await fs.readFile(path.join(root, 'LICENSE'));
   await fs.writeFile(path.join(bundleRoot, 'LICENSE'), license);
   await fs.writeFile(path.join(bundleRoot, 'app', 'LICENSE'), license);
-  await writeJson(path.join(bundleRoot, 'app', 'package.json'), { name: 'coursemirror', version: packageJson.version });
+  await writeJson(path.join(bundleRoot, 'app', 'package.json'), { name: 'coursemirror', version: packageVersion });
   await writeJson(path.join(bundleRoot, 'bundle-manifest.json'), {
     application: {
       name: 'CourseMirror',
@@ -152,6 +176,12 @@ if (process.platform === 'win32') {
     result = await runPowerShell(path.join(mismatchRoot, 'scripts', 'build-windows-installer.ps1'), mismatchRoot, { ISCC_PATH: path.join(temp, 'not-used.exe') });
     assert.notEqual(result.code, 0);
     assert.match(result.output, /Portable bundle manifest version mismatch: expected 2\.4\.1, found 9\.9\.9\./);
+
+    const staleBinaryRoot = path.join(temp, 'stale binary repo');
+    await createSyntheticRepository(staleBinaryRoot, { packageVersion: '9.9.9' });
+    result = await runPowerShell(path.join(staleBinaryRoot, 'scripts', 'build-windows-installer.ps1'), staleBinaryRoot, { ISCC_PATH: path.join(temp, 'not-used.exe') });
+    assert.notEqual(result.code, 0);
+    assert.match(result.output, /Packaged Windows binary version mismatch for CourseMirror\.exe: expected 9\.9\.9 \(9\.9\.9\.0\)/);
 
     const incompleteRoot = path.join(temp, 'incomplete bundle repo');
     await createSyntheticRepository(incompleteRoot);

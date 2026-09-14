@@ -3,6 +3,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createTemporaryAssemblyVersionSource } from './windows-assembly-version.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PROJECT_DIR = path.join(ROOT, 'desktop', 'CourseMirror.CredentialHelper');
@@ -67,13 +68,18 @@ async function build() {
   await fs.mkdir(OUTPUT_DIR, { recursive: true });
   const references = ['System.dll', 'System.Core.dll', 'System.Web.Extensions.dll']
     .map(name => `/reference:${path.join(frameworkDir, name)}`);
-  await run(compiler, [
-    '/nologo', '/target:winexe', '/platform:anycpu', '/optimize+', '/debug-',
-    `/out:${OUTPUT_EXE}`, `/win32manifest:${manifest}`, ...references, ...SOURCE_FILES
-  ]);
+  const generatedVersion = await createTemporaryAssemblyVersionSource(ROOT, 'credential-helper');
+  try {
+    await run(compiler, [
+      '/nologo', '/target:winexe', '/platform:anycpu', '/optimize+', '/debug-',
+      `/out:${OUTPUT_EXE}`, `/win32manifest:${manifest}`, ...references, ...SOURCE_FILES, generatedVersion.sourceFile
+    ]);
+  } finally {
+    await generatedVersion.cleanup();
+  }
   await fs.copyFile(appConfig, OUTPUT_CONFIG);
   await requireFile(OUTPUT_EXE, 'compiled credential helper');
-  console.log(`Windows credential helper created: ${OUTPUT_EXE}`);
+  console.log(`Windows credential helper ${generatedVersion.packageVersion} created: ${OUTPUT_EXE}`);
 }
 
 build().catch(error => {
