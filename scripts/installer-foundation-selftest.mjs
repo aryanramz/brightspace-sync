@@ -52,6 +52,7 @@ assert.doesNotMatch(installerSource, /^\s*(?:Filename|Name):.+(?:Settings|Logs|D
 
 assert.match(buildScript, /\$ExpectedCompilerVersion = '7\.1\.0'/);
 assert.match(buildScript, /\$ExpectedCompilerMachine = 0x8664/);
+assert.match(buildScript, /& \$Path --version/);
 assert.match(buildScript, /\$env:ISCC_PATH/);
 assert.match(buildScript, /package\.json/);
 assert.match(buildScript, /dist\\CourseMirror/);

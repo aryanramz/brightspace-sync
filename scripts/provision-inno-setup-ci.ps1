@@ -48,10 +48,13 @@ $compilerPath = Join-Path $installDirectory 'ISCC.exe'
 if (-not (Test-Path -LiteralPath $compilerPath -PathType Leaf)) {
     throw "Pinned Inno Setup compiler was not installed at the expected location: $compilerPath"
 }
-$versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($compilerPath)
-$actualVersion = '{0}.{1}.{2}' -f $versionInfo.FileMajorPart, $versionInfo.FileMinorPart, $versionInfo.FileBuildPart
-if ($actualVersion -cne $ExpectedVersion -or $versionInfo.FilePrivatePart -ne 0) {
-    throw "Provisioned Inno Setup compiler version mismatch: expected $ExpectedVersion, found $($versionInfo.FileVersion)."
+$versionLines = @(& $compilerPath --version 2>&1)
+$versionExitCode = $LASTEXITCODE
+$versionText = ($versionLines | ForEach-Object { [string]$_ }) -join "`n"
+$reportedVersions = @([regex]::Matches($versionText, '(?<!\d)\d+\.\d+\.\d+(?!\d)') | ForEach-Object { $_.Value } | Select-Object -Unique)
+$actualVersion = if ($reportedVersions.Count -eq 1) { $reportedVersions[0] } else { 'unknown' }
+if ($versionExitCode -ne 0 -or $actualVersion -cne $ExpectedVersion) {
+    throw "Provisioned Inno Setup compiler version mismatch: expected $ExpectedVersion, found $actualVersion."
 }
 
 Add-Content -LiteralPath $env:GITHUB_ENV -Value "ISCC_PATH=$compilerPath" -Encoding utf8

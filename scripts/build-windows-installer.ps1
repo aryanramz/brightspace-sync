@@ -70,13 +70,15 @@ function Get-PeMachine([string]$Path) {
 }
 
 function Assert-Compiler([string]$Path) {
-    $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($Path)
-    $actualVersion = '{0}.{1}.{2}' -f $versionInfo.FileMajorPart, $versionInfo.FileMinorPart, $versionInfo.FileBuildPart
-    if ($actualVersion -ne $ExpectedCompilerVersion -or $versionInfo.FilePrivatePart -ne 0) {
-        throw "Inno Setup compiler version mismatch: expected $ExpectedCompilerVersion x64, found $($versionInfo.FileVersion)."
+    $versionLines = @(& $Path --version 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to query the Inno Setup compiler version at: $Path"
     }
-    if ($versionInfo.ProductName -notmatch '^Inno Setup') {
-        throw "ISCC_PATH is not an Inno Setup compiler: $Path"
+    $versionText = ($versionLines | ForEach-Object { [string]$_ }) -join "`n"
+    $reportedVersions = @([regex]::Matches($versionText, '(?<!\d)\d+\.\d+\.\d+(?!\d)') | ForEach-Object { $_.Value } | Select-Object -Unique)
+    $actualVersion = if ($reportedVersions.Count -eq 1) { $reportedVersions[0] } else { 'unknown' }
+    if ($actualVersion -cne $ExpectedCompilerVersion) {
+        throw "Inno Setup compiler version mismatch: expected $ExpectedCompilerVersion x64, found $actualVersion."
     }
     $machine = Get-PeMachine $Path
     if ($machine -ne $ExpectedCompilerMachine) {
