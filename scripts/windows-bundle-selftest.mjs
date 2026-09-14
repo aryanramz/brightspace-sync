@@ -117,9 +117,15 @@ await requireFile(path.join(SOURCE_BUNDLE, 'CourseMirror.exe'), 'compiled Window
 await requireFile(path.join(SOURCE_BUNDLE, 'CourseMirror.exe.config'), 'Windows control-panel runtime configuration');
 await requireFile(path.join(SOURCE_BUNDLE, 'CourseMirror Credential Helper.exe'), 'Windows credential helper');
 await requireFile(path.join(SOURCE_BUNDLE, 'CourseMirror Credential Helper.exe.config'), 'Windows credential-helper runtime configuration');
+await requireFile(path.join(SOURCE_BUNDLE, 'LICENSE'), 'bundle-root project license');
 await requireFile(path.join(SOURCE_BUNDLE, 'runtime', 'node.exe'), 'private Node.js runtime');
 await requireFile(path.join(SOURCE_BUNDLE, 'app', 'src', 'launcher.mjs'), 'packaged application launcher');
 await requireFile(path.join(SOURCE_BUNDLE, 'app', 'node_modules', 'playwright', 'package.json'), 'packaged Playwright dependency');
+assert.deepEqual(
+  await fs.readFile(path.join(SOURCE_BUNDLE, 'LICENSE')),
+  await fs.readFile(path.join(SOURCE_BUNDLE, 'app', 'LICENSE')),
+  'bundle-root and packaged application licenses must match'
+);
 
 const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'coursemirror-windows-bundle-selftest-'));
 try {

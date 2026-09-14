@@ -223,6 +223,37 @@ Scheduled outcomes append to the private Node-resolved `logs\scheduled.log`. The
 
 Automated tests use a mock Task Scheduler service to prove idempotent create/update/delete, exact-definition rollback, combined credential rollback, reconciliation, and partial-failure reporting without altering a developer or hosted runner's real task library. The packaged Windows test exercises the actual `CourseMirror.exe --scheduled-run` → private Node path with isolated external data and no configured site, proving the no-UI/no-console entry point without contacting Brightspace. A real disposable Task Scheduler registration test is intentionally not part of routine CI because it would mutate host-level scheduled-task state.
 
+## Windows installer build foundation (Milestone 2C.1)
+
+The installer consumes the already-verified portable bundle at `dist\CourseMirror`; it does not compile raw application source. The supported chain is:
+
+```text
+npm run build:windows-bundle
+    -> dist\CourseMirror\
+npm run build:windows-installer
+    -> dist\installer\CourseMirror-<version>-Setup.exe
+    -> dist\installer\CourseMirror-<version>-Setup.exe.sha256
+```
+
+The application and installer version both come from `package.json`. The build validates that the portable manifest and packaged application agree with that version before invoking Inno Setup. The SHA-256 sidecar uses lowercase hexadecimal, two spaces, and the setup filename.
+
+Local installer builds require **Inno Setup 7.1.0 x64 exactly**. Install that compiler separately and either let the build locate a normal Inno Setup 7 installation or set `ISCC_PATH` to its `ISCC.exe`. The normal local build never downloads or installs developer tooling. From a Windows source checkout:
+
+```powershell
+npm ci --ignore-scripts
+npm run build:windows-bundle
+$env:ISCC_PATH = 'C:\path\to\Inno Setup 7\ISCC.exe' # optional
+npm run build:windows-installer
+```
+
+CI obtains the immutable official `innosetup-7.1.0-x64.exe` release asset, verifies its pinned SHA-256 and valid Authenticode signature, installs it into runner-temporary storage, and uses the same installer build entry point. Ordinary branch and pull-request CI uploads the result only as the short-lived `coursemirror-installer-development` artifact; it is not an official GitHub Release.
+
+The generated setup is English-only, per-user, and requires no elevation. It installs to the fixed `%LOCALAPPDATA%\Programs\CourseMirror\` location and keeps the existing private `%LOCALAPPDATA%\CourseMirror\` runtime data separate. It creates exactly one direct Start Menu application shortcut, offers an optional desktop shortcut that is off by default, and offers to launch CourseMirror on completion. Application settings, login, mirror, Drive, and scheduling remain in the application's existing first-run experience rather than the installer wizard.
+
+The supported baseline is Windows 10 version 22H2 (build 19045) or later on x64 hardware, including Windows 11 x64. The setup blocks 32-bit Windows and ARM64. It requires .NET Framework 4.8 or newer; when missing, it stops and offers to open Microsoft's official download page rather than installing .NET silently. The portable bundle supplies the private Node runtime and Playwright library but no Chromium browser.
+
+2C.1 installers are intentionally unsigned development/test artifacts. Code signing, release publication, installer-aware active-operation handling, lifecycle maintenance, upgrade/repair policy, uninstall data choices, update checks, and clean-VM qualification remain later milestones. Users should not be instructed to weaken Windows Defender or SmartScreen.
+
 ## Deferred / Later Improvements
 
 The items below are **non-blocking**. They are not required before moving to installer and UI work, and they do not prevent the Windows distribution foundation from being considered complete.
@@ -247,7 +278,6 @@ The items below are **non-blocking**. They are not required before moving to ins
 
 The following work remains intentionally deferred to later milestones:
 
-- Start Menu shortcuts
 - repair behavior
 - uninstall behavior
 - choices to preserve or delete user data during uninstall

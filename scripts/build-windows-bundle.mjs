@@ -235,6 +235,7 @@ async function build() {
     await fs.writeFile(path.join(appDir, 'package.json'), `${JSON.stringify(runtimePackage, null, 2)}\n`, 'utf8');
     await fs.copyFile(sourceConfigFile, path.join(appDir, 'config.example.json'));
     await fs.copyFile(sourceLicenseFile, path.join(appDir, 'LICENSE'));
+    await fs.copyFile(sourceLicenseFile, path.join(stagedBundle, 'LICENSE'));
     await fs.copyFile(launcherTemplate, path.join(stagedBundle, 'CourseMirror.cmd'));
     await fs.copyFile(controlPanelExe, path.join(stagedBundle, 'CourseMirror.exe'));
     await fs.copyFile(controlPanelConfig, path.join(stagedBundle, 'CourseMirror.exe.config'));
