@@ -41,6 +41,7 @@
     "build:windows-installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-installer.ps1",
     "windows-bundle-selftest": "node scripts/windows-bundle-selftest.mjs",
     "installer-foundation-selftest": "node scripts/installer-foundation-selftest.mjs",
+    "installer-lifecycle-selftest": "node scripts/installer-lifecycle-selftest.mjs",
     "security-selftest": "node src/security-selftest.mjs"
   },
   "dependencies": {

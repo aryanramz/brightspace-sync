@@ -1,17 +1,35 @@
 using System;
 using System.Threading;
 using System.Windows.Forms;
+using CourseMirror.Security;
 
 namespace CourseMirror.ControlPanel
 {
     internal static class Program
     {
-        internal const string MutexName = @"Local\CourseMirror.ControlPanel";
-        internal const string LegacyMutexName = @"Local\BrightspaceSync.ControlPanel";
+        internal const string MutexName = CourseMirrorProcessIdentity.ControlPanelMutexName;
+        internal const string LegacyMutexName = CourseMirrorProcessIdentity.LegacyControlPanelMutexName;
 
         [STAThread]
         private static int Main(string[] args)
         {
+            int maintenanceExitCode;
+            if (InstallerMaintenanceCommand.TryRun(args, out maintenanceExitCode))
+                return maintenanceExitCode;
+
+            if (args.Length == 2 && args[0] == "--installer-lifecycle-self-test")
+                return InstallerMaintenanceSelfTest.Run(args[1]);
+
+            bool installerActive;
+            try { installerActive = CourseMirrorProcessIdentity.IsMutexActive(CourseMirrorProcessIdentity.InstallerLifecycleMutexName); }
+            catch { return 4; }
+            if (installerActive)
+            {
+                if (!IsScheduledRun(args))
+                    MessageBox.Show("CourseMirror is being installed or repaired. Try again when setup finishes.", "CourseMirror", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return 4;
+            }
+
             if (IsScheduledRun(args))
                 return ScheduledRunCommand.Run();
 

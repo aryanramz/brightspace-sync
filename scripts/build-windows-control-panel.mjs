@@ -15,11 +15,14 @@ const SOURCE_FILES = [
   'BackendClient.cs',
   'ControlPanelSelfTest.cs',
   'FolderPicker.cs',
+  'InstallerMaintenance.cs',
+  'InstallerMaintenanceSelfTest.cs',
   'MainForm.cs',
   'Program.cs',
   'ScheduledRunCommand.cs',
   'SetupSettingsForm.cs',
   'WindowsTaskScheduler.cs',
+  path.join('..', 'Shared', 'CourseMirrorProcessIdentity.cs'),
   path.join('..', 'Shared', 'WindowsCredentialStore.cs'),
   path.join('Properties', 'AssemblyInfo.cs')
 ];

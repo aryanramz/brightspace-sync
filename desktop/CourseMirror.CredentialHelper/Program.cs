@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Web.Script.Serialization;
 
 namespace CourseMirror.CredentialHelper
@@ -25,34 +26,45 @@ namespace CourseMirror.CredentialHelper
         {
             if (args.Length == 2 && args[0] == "--self-test") return SelfTest(args[1]);
             if (args.Length != 2 || args[0] != "--pipe" || !Regex.IsMatch(args[1], @"^CourseMirror-Credential-[A-Za-z0-9-]+$")) return 2;
-
             try
             {
-                using (var pipe = new NamedPipeClientStream(".", args[1], PipeDirection.InOut, PipeOptions.None))
-                {
-                    pipe.Connect(15000);
-                    string input = ReadBoundedLine(pipe);
-                    var serializer = new JavaScriptSerializer { MaxJsonLength = MaximumRequestCharacters };
-                    PipeRequest request = serializer.Deserialize<PipeRequest>(input);
-                    input = String.Empty;
-                    string response = ExecuteAndSerialize(request, new CompatibleCredentialStore(new WindowsCredentialStore()), serializer);
-                    byte[] output = Encoding.UTF8.GetBytes(response);
-                    try
-                    {
-                        pipe.Write(output, 0, output.Length);
-                        pipe.Flush();
-                    }
-                    finally
-                    {
-                        Array.Clear(output, 0, output.Length);
-                        response = String.Empty;
-                    }
-                }
-                return 0;
+                if (CourseMirrorProcessIdentity.IsMutexActive(CourseMirrorProcessIdentity.InstallerLifecycleMutexName)) return 4;
             }
-            catch
+            catch { return 4; }
+
+            bool ownsActivityMutex;
+            using (var activityMutex = new Mutex(true, CourseMirrorProcessIdentity.CredentialHelperMutexName, out ownsActivityMutex))
             {
-                return 1;
+                if (!ownsActivityMutex) return 3;
+                try
+                {
+                    using (var pipe = new NamedPipeClientStream(".", args[1], PipeDirection.InOut, PipeOptions.None))
+                    {
+                        pipe.Connect(15000);
+                        string input = ReadBoundedLine(pipe);
+                        var serializer = new JavaScriptSerializer { MaxJsonLength = MaximumRequestCharacters };
+                        PipeRequest request = serializer.Deserialize<PipeRequest>(input);
+                        input = String.Empty;
+                        string response = ExecuteAndSerialize(request, new CompatibleCredentialStore(new WindowsCredentialStore()), serializer);
+                        byte[] output = Encoding.UTF8.GetBytes(response);
+                        try
+                        {
+                            pipe.Write(output, 0, output.Length);
+                            pipe.Flush();
+                        }
+                        finally
+                        {
+                            Array.Clear(output, 0, output.Length);
+                            response = String.Empty;
+                        }
+                    }
+                    GC.KeepAlive(activityMutex);
+                    return 0;
+                }
+                catch
+                {
+                    return 1;
+                }
             }
         }
 

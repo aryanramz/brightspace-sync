@@ -12,6 +12,7 @@ const OUTPUT_EXE = path.join(OUTPUT_DIR, 'CourseMirror Credential Helper.exe');
 const OUTPUT_CONFIG = `${OUTPUT_EXE}.config`;
 const SOURCE_FILES = [
   path.join(PROJECT_DIR, 'Program.cs'),
+  path.join(ROOT, 'desktop', 'Shared', 'CourseMirrorProcessIdentity.cs'),
   path.join(ROOT, 'desktop', 'Shared', 'WindowsCredentialStore.cs'),
   path.join(PROJECT_DIR, 'Properties', 'AssemblyInfo.cs')
 ];

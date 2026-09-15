@@ -75,6 +75,9 @@ jobs:
       - name: Windows installer foundation self-test
         run: npm run installer-foundation-selftest
 
+      - name: Windows installer lifecycle contract self-test
+        run: npm run installer-lifecycle-selftest
+
   dependency-security:
     runs-on: ubuntu-latest
     steps:
@@ -182,6 +185,9 @@ jobs:
 
       - name: Verify private runtime and source-checkout independence
         run: npm run windows-bundle-selftest
+
+      - name: Verify installer lifecycle and maintenance commands
+        run: npm run installer-lifecycle-selftest
 
       - name: Verify installer source and failure contracts
         run: npm run installer-foundation-selftest
