@@ -1,6 +1,7 @@
 #define ProductName "CourseMirror"
 #define ProductPublisher "aryanramz"
 #define ProductAppId "{{7E264BC7-FCBE-4BF2-9A24-E342C533A770}"
+#define ProductUninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\{7E264BC7-FCBE-4BF2-9A24-E342C533A770}_is1"
 #define ProductExecutable "CourseMirror.exe"
 #define ProductRepositoryUrl "https://github.com/aryanramz/coursemirror"
 #define ProductSupportUrl "https://github.com/aryanramz/coursemirror/issues"

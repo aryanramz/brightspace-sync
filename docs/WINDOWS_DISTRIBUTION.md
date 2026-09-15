@@ -1,6 +1,6 @@
 # CourseMirror — for D2L Brightspace: Windows distribution foundation
 
-This milestone prepares CourseMirror for a conventional Windows installation without building the final installer. The planned default per-user application location is `%LOCALAPPDATA%\Programs\CourseMirror\`; private runtime data remains separate at `%LOCALAPPDATA%\CourseMirror\`.
+This document records CourseMirror's Windows distribution, desktop, and installer lifecycle contracts. The default per-user application location is `%LOCALAPPDATA%\Programs\CourseMirror\`; private runtime data remains separate at `%LOCALAPPDATA%\CourseMirror\`.
 
 CourseMirror is published by **aryanramz** at `https://github.com/aryanramz/coursemirror`. CourseMirror is an unofficial third-party utility for D2L Brightspace. It is not affiliated with or endorsed by D2L Corporation.
 
@@ -252,7 +252,35 @@ The generated setup is English-only, per-user, and requires no elevation. It ins
 
 The supported baseline is Windows 10 version 22H2 (build 19045) or later on x64 hardware, including Windows 11 x64. The setup blocks 32-bit Windows and ARM64. It requires .NET Framework 4.8 or newer; when missing, it stops and offers to open Microsoft's official download page rather than installing .NET silently. The portable bundle supplies the private Node runtime and Playwright library but no Chromium browser.
 
-2C.1 installers are intentionally unsigned development/test artifacts. Code signing, release publication, installer-aware active-operation handling, lifecycle maintenance, upgrade/repair policy, uninstall data choices, update checks, and clean-VM qualification remain later milestones. Users should not be instructed to weaken Windows Defender or SmartScreen.
+2C.1 installers are intentionally unsigned development/test artifacts. Code signing, release publication, update checks, and clean-VM qualification remain later milestones. Users should not be instructed to weaken Windows Defender or SmartScreen.
+
+## Windows installer lifecycle management (Milestone 2C.2)
+
+The permanent per-user App ID identifies fresh install, upgrade, and same-version repair. Installed and incoming versions are parsed and compared numerically. A newer incoming version upgrades in place, the same version repairs the managed payload, and an older incoming version is blocked without a force-downgrade path. Version remains `2.4.1` for this milestone.
+
+Install, upgrade, repair, and uninstall run a hidden CourseMirror-owned preflight before application files are changed. The incoming install payload supplies the trusted preflight copy for setup; uninstall uses the installed executable. Preflight checks the canonical and legacy control-panel mutexes, the credential-helper activity mutex, and the Node status contract's authoritative active-operation result. That preserves the existing live/dead-PID and stale foreign/malformed lock semantics. Busy state presents Retry/Cancel and never force-kills CourseMirror, Node, credential helper, or browser processes.
+
+The hidden maintenance entry points are:
+
+```text
+CourseMirror.exe --installer-preflight
+CourseMirror.exe --installer-reconcile-schedule
+CourseMirror.exe --installer-remove-schedule
+CourseMirror.exe --installer-remove-credential
+CourseMirror.exe --installer-remove-private-data
+```
+
+They run before the ordinary GUI/single-instance path, display no control panel, never launch Brightspace or a browser, and accept no user data on the command line. Exit `0` means success, `10` means busy/retry later, `11` means preflight inspection failed, and `12` means a maintenance operation failed.
+
+Before replacement, setup moves the existing installer-managed payload into an application-local rollback directory while leaving Inno's active uninstall metadata in place. Failure before completion restores the previous payload where practical; a rollback failure preserves the recovery material and records a generic failure. A completed install removes the rollback directory, so obsolete managed payload files and arbitrary application-directory files are not carried into a successful repair. `%LOCALAPPDATA%\CourseMirror`, credentials, the school mirror, and the Drive destination are never part of payload staging or rollback.
+
+After successful payload replacement, CourseMirror reads its existing application-owned settings and reconciles only `\CourseMirror\Scheduled Sync - <current-user-SID>` and the supported exact legacy identity. An enabled configured schedule is recreated against the current fixed executable with its saved cadence and existing indefinite-run/security policy. Disabled or unconfigured scheduling removes the exact managed task and creates nothing. Reconciliation failure is a repairable warning and does not delete private data or invalidate an otherwise installed payload.
+
+Upgrade and repair preserve configuration, state, logs, browser profile/session, saved Windows credentials, selected mirror, Drive copy, and schedule preferences. Reinstall after a prior default uninstall naturally reuses preserved `%LOCALAPPDATA%\CourseMirror` data; first-run setup appears only if the application still considers that configuration incomplete. The desktop shortcut remains off by default on fresh install, while Inno's previous-task selection preserves the choice across upgrade/repair and recreates a previously selected missing shortcut. The Finish-page **Launch CourseMirror** choice remains checked by default.
+
+Default uninstall removes the managed application payload, Start Menu/optional Desktop shortcuts, uninstall registration, and the exact current-user scheduled task. It preserves private app data, browser session, credentials, school mirror, and Drive copy. The explicitly unchecked **Also remove CourseMirror settings and private app data** option additionally removes only the canonical/legacy CourseMirror credential and `%LOCALAPPDATA%\CourseMirror`. Reparse points inside that private root are removed as links and are never traversed; the school mirror and Drive destination are never inferred or deletion targets.
+
+Lifecycle troubleshooting records are created only for failures or repairable maintenance warnings under `%LOCALAPPDATA%\CourseMirror\logs\installer`. Entries contain fixed operational fields such as version, operation, stage, result, and generic category. They contain no config, URL, username, credential, cookie, token, profile/course/mirror/Drive content, environment dump, or private command line. There is no telemetry.
 
 ## Deferred / Later Improvements
 
@@ -278,9 +306,6 @@ The items below are **non-blocking**. They are not required before moving to ins
 
 The following work remains intentionally deferred to later milestones:
 
-- repair behavior
-- uninstall behavior
-- choices to preserve or delete user data during uninstall
 - clean Windows VM installation testing
 - legacy upgrade testing
 - repair testing

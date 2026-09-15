@@ -39,11 +39,14 @@
     <Compile Include="BackendClient.cs" />
     <Compile Include="ControlPanelSelfTest.cs" />
     <Compile Include="FolderPicker.cs" />
+    <Compile Include="InstallerMaintenance.cs" />
+    <Compile Include="InstallerMaintenanceSelfTest.cs" />
     <Compile Include="MainForm.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="ScheduledRunCommand.cs" />
     <Compile Include="SetupSettingsForm.cs" />
     <Compile Include="WindowsTaskScheduler.cs" />
+    <Compile Include="..\Shared\CourseMirrorProcessIdentity.cs"><Link>CourseMirrorProcessIdentity.cs</Link></Compile>
     <Compile Include="..\Shared\WindowsCredentialStore.cs"><Link>WindowsCredentialStore.cs</Link></Compile>
     <Compile Include="Properties\AssemblyInfo.cs" />
     <None Include="App.config" />
