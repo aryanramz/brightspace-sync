@@ -20,30 +20,43 @@ namespace CourseMirror.ControlPanel
         private readonly Button _settingsButton = new Button();
         private readonly Button _refreshLoginButton = new Button();
         private readonly Button _viewLogsButton = new Button();
+        private readonly LinkLabel _checkUpdatesLink = new LinkLabel();
+        private readonly Label _updateMessage = new Label();
+        private readonly LinkLabel _viewReleaseLink = new LinkLabel();
         private readonly TextBox _activity = new TextBox();
         private readonly System.Windows.Forms.Timer _statusTimer = new System.Windows.Forms.Timer();
         private readonly SemaphoreSlim _statusRefreshGate = new SemaphoreSlim(1, 1);
         private readonly ISettingsDialogService _settingsDialog;
+        private readonly IUpdateCheckServiceFactory _updateCheckFactory;
         private IDesktopBackendClient _backend;
         private BackendStatus _backendStatus;
+        private IUpdateCheckService _updateChecker;
+        private string _trustedReleaseUrl;
+        private bool _updateCheckRunning;
+        private bool _updateAvailable;
+        private bool _automaticUpdateCheckStarted;
         private bool _operationRunning;
         private bool _operationStarting;
         private bool _closing;
         private bool _firstRunSetupOffered;
 
-        internal MainForm() : this(null, StatusRefreshIntervalMilliseconds, null) { }
+        internal MainForm() : this(null, StatusRefreshIntervalMilliseconds, null, new UpdateCheckServiceFactory()) { }
 
         internal MainForm(IDesktopBackendClient backend, int statusRefreshIntervalMilliseconds)
-            : this(backend, statusRefreshIntervalMilliseconds, null) { }
+            : this(backend, statusRefreshIntervalMilliseconds, null, new DisabledUpdateCheckServiceFactory()) { }
 
         internal MainForm(IDesktopBackendClient backend, int statusRefreshIntervalMilliseconds, ISettingsDialogService settingsDialog)
+            : this(backend, statusRefreshIntervalMilliseconds, settingsDialog, new DisabledUpdateCheckServiceFactory()) { }
+
+        internal MainForm(IDesktopBackendClient backend, int statusRefreshIntervalMilliseconds, ISettingsDialogService settingsDialog, IUpdateCheckServiceFactory updateCheckFactory)
         {
             _backend = backend;
             _settingsDialog = settingsDialog ?? new SettingsDialogService();
+            _updateCheckFactory = updateCheckFactory ?? new DisabledUpdateCheckServiceFactory();
             Text = "CourseMirror";
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(520, 390);
-            MinimumSize = new Size(536, 429);
+            ClientSize = new Size(520, 436);
+            MinimumSize = new Size(536, 475);
             Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
             AutoScaleMode = AutoScaleMode.Dpi;
             FormClosing += OnFormClosing;
@@ -86,9 +99,24 @@ namespace CourseMirror.ControlPanel
             _settingsButton.Click += async delegate { await OpenSettingsAsync(false); };
             _refreshLoginButton.Click += async delegate { await RunRefreshLoginAsync(); };
 
-            var activityLabel = CreateCaption("Activity / Result:", 27, 282);
+            _checkUpdatesLink.AutoSize = true;
+            _checkUpdatesLink.Text = "Check for Updates";
+            _checkUpdatesLink.Location = new Point(27, 281);
+            _checkUpdatesLink.LinkClicked += async delegate { await CheckForUpdatesAsync(true); };
+
+            _updateMessage.AutoEllipsis = true;
+            _updateMessage.Location = new Point(151, 280);
+            _updateMessage.Size = new Size(255, 22);
+
+            _viewReleaseLink.AutoSize = true;
+            _viewReleaseLink.Text = "View Release";
+            _viewReleaseLink.Location = new Point(416, 281);
+            _viewReleaseLink.Visible = false;
+            _viewReleaseLink.LinkClicked += delegate { OpenTrustedRelease(); };
+
+            var activityLabel = CreateCaption("Activity / Result:", 27, 324);
             activityLabel.AutoSize = true;
-            _activity.Location = new Point(27, 306);
+            _activity.Location = new Point(27, 348);
             _activity.Size = new Size(466, 56);
             _activity.Multiline = true;
             _activity.ReadOnly = true;
@@ -99,7 +127,8 @@ namespace CourseMirror.ControlPanel
             Controls.AddRange(new Control[] {
                 title, statusLabel, _statusValue, lastSyncLabel, _lastSyncValue,
                 _quickButton, _fullButton, _openMirrorButton, _viewLogsButton,
-                _settingsButton, _refreshLoginButton, activityLabel, _activity
+                _settingsButton, _refreshLoginButton, _checkUpdatesLink, _updateMessage,
+                _viewReleaseLink, activityLabel, _activity
             });
 
             SetSyncButtons(false);
@@ -120,6 +149,10 @@ namespace CourseMirror.ControlPanel
         internal bool OperationStartingForSelfTest { get { return _operationStarting; } }
         internal bool FirstRunSetupOfferedForSelfTest { get { return _firstRunSetupOffered; } }
         internal BackendStatus BackendStatusForSelfTest { get { return _backendStatus; } }
+        internal bool UpdateCheckRunningForSelfTest { get { return _updateCheckRunning; } }
+        internal bool UpdateAvailableForSelfTest { get { return _updateAvailable; } }
+        internal string UpdateTextForSelfTest { get { return _updateMessage.Text; } }
+        internal Task CheckForUpdatesForSelfTestAsync(bool manual) { return CheckForUpdatesAsync(manual); }
         internal string StatusUiSnapshotForSelfTest
         {
             get { return String.Join("|", _statusValue.Text, _lastSyncValue.Text, _activity.Text, _quickButton.Enabled, _fullButton.Enabled); }
@@ -157,6 +190,8 @@ namespace CourseMirror.ControlPanel
                     _firstRunSetupOffered = true;
                     await OpenSettingsAsync(true);
                 }
+                if (!_closing && _backendStatus != null)
+                    StartAutomaticUpdateCheck();
             }
             catch (Exception)
             {
@@ -422,6 +457,107 @@ namespace CourseMirror.ControlPanel
             finally
             {
                 if (!_closing) _settingsButton.Enabled = true;
+            }
+        }
+
+        private void EnsureUpdateChecker()
+        {
+            if (_updateChecker != null || _backendStatus == null || String.IsNullOrWhiteSpace(_backendStatus.dataDir)) return;
+            _updateChecker = _updateCheckFactory.Create(_backendStatus.dataDir);
+        }
+
+        private async void StartAutomaticUpdateCheck()
+        {
+            if (_automaticUpdateCheckStarted) return;
+            _automaticUpdateCheckStarted = true;
+            try
+            {
+                EnsureUpdateChecker();
+                if (_updateChecker == null || _closing) return;
+                UpdateCheckResult cached = _updateChecker.GetCachedResult();
+                if (!_closing && cached != null && cached.Outcome == UpdateCheckOutcome.UpdateAvailable)
+                    DisplayUpdateResult(cached, false);
+                await CheckForUpdatesAsync(false);
+            }
+            catch
+            {
+                // Automatic update checks are intentionally silent and never block startup.
+            }
+        }
+
+        private async Task CheckForUpdatesAsync(bool manual)
+        {
+            if (_closing || _updateCheckRunning) return;
+            _updateCheckRunning = true;
+            _checkUpdatesLink.Enabled = false;
+            if (manual)
+            {
+                _updateMessage.Text = "Checking...";
+            }
+            try
+            {
+                EnsureUpdateChecker();
+                if (_updateChecker == null)
+                {
+                    if (manual) _updateMessage.Text = "Unable to check right now.";
+                    return;
+                }
+                UpdateCheckResult result = await _updateChecker.CheckAsync(manual);
+                if (_closing) return;
+                DisplayUpdateResult(result, manual);
+            }
+            catch
+            {
+                if (!_closing && manual)
+                {
+                    _updateAvailable = false;
+                    _trustedReleaseUrl = null;
+                    _viewReleaseLink.Visible = false;
+                    _updateMessage.Text = "Unable to check right now.";
+                }
+            }
+            finally
+            {
+                _updateCheckRunning = false;
+                if (!_closing) _checkUpdatesLink.Enabled = true;
+            }
+        }
+
+        private void DisplayUpdateResult(UpdateCheckResult result, bool manual)
+        {
+            if (_closing || result == null) return;
+            if (result.Outcome == UpdateCheckOutcome.UpdateAvailable
+                && UpdateCheckService.IsTrustedReleaseUrl(result.ReleaseUrl))
+            {
+                _updateAvailable = true;
+                _trustedReleaseUrl = result.ReleaseUrl;
+                _updateMessage.Text = "Version " + result.LatestVersion + " is available.";
+                _viewReleaseLink.Visible = true;
+                return;
+            }
+            if (!manual) return;
+            _updateAvailable = false;
+            _trustedReleaseUrl = null;
+            _viewReleaseLink.Visible = false;
+            _updateMessage.Text = result.Outcome == UpdateCheckOutcome.UpToDate
+                ? "CourseMirror is up to date."
+                : "Unable to check right now.";
+        }
+
+        private void OpenTrustedRelease()
+        {
+            if (!UpdateCheckService.IsTrustedReleaseUrl(_trustedReleaseUrl)) return;
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = _trustedReleaseUrl,
+                    UseShellExecute = true
+                });
+            }
+            catch
+            {
+                if (!_closing) _updateMessage.Text = "Windows could not open the release page.";
             }
         }
 

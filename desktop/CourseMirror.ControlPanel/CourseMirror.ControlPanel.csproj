@@ -30,6 +30,7 @@
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Drawing" />
+    <Reference Include="System.Net.Http" />
     <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="Microsoft.CSharp" />
@@ -45,6 +46,8 @@
     <Compile Include="Program.cs" />
     <Compile Include="ScheduledRunCommand.cs" />
     <Compile Include="SetupSettingsForm.cs" />
+    <Compile Include="UpdateCheckSelfTest.cs" />
+    <Compile Include="UpdateCheckService.cs" />
     <Compile Include="WindowsTaskScheduler.cs" />
     <Compile Include="..\Shared\CourseMirrorProcessIdentity.cs"><Link>CourseMirrorProcessIdentity.cs</Link></Compile>
     <Compile Include="..\Shared\WindowsCredentialStore.cs"><Link>WindowsCredentialStore.cs</Link></Compile>

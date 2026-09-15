@@ -282,6 +282,26 @@ Default uninstall removes the managed application payload, Start Menu/optional D
 
 Lifecycle troubleshooting records are created only for failures or repairable maintenance warnings under `%LOCALAPPDATA%\CourseMirror\logs\installer`. Entries contain fixed operational fields such as version, operation, stage, result, and generic category. They contain no config, URL, username, credential, cookie, token, profile/course/mirror/Drive content, environment dump, or private command line. There is no telemetry.
 
+## Update checking and official release pipeline (Milestone 2C.3)
+
+The normal control-panel window performs one asynchronous update check after startup. It does not run from scheduled/headless mode, delay the rest of the UI, open a browser, download an installer, or install anything. Automatic network attempts are limited to once per 24 hours, including failed attempts, and automatic failures remain silent. **Check for Updates** bypasses that throttle, retries one transient failure, and reports a concise result in the window. When a newer stable version exists, the window shows a non-blocking notice and a **View Release** link; opening the trusted GitHub release page remains an explicit user action.
+
+The checker sends an unauthenticated five-second HTTPS GET to the public GitHub latest-release endpoint with a versioned CourseMirror user agent. Only exact stable tags of the form `vMAJOR.MINOR.PATCH` are accepted; draft, prerelease, malformed, credential-bearing, or extended tags are rejected. The UI never trusts a URL supplied by the API: it constructs `https://github.com/aryanramz/coursemirror/releases/tag/v<version>` locally from the validated version.
+
+Update state is separate from application configuration and lives at the Node-resolved private data path `state\update-check.json`. Its allowlisted schema contains only a schema version, last-attempt timestamp, optional ETag, latest validated version, and locally constructed release URL. The cache is written atomically, corrupt cache is ignored safely, and a `304 Not Modified` response is used only when the cached release metadata is still valid. No token, credential, cookie, browser state, mirror content, Drive content, machine identity, environment dump, response body, or raw error is persisted.
+
+The official `.github/workflows/release.yml` workflow runs only for pushed tags matching `v*.*.*`; it has no branch, pull-request, scheduled, or manual trigger. Its validation script then enforces the stricter stable-tag grammar and exact equality with `package.json`. All application, security, dependency, installer, update-check, and release-contract gates must pass before the Windows job builds the existing verified portable bundle and Inno Setup installer. The installer and conventional `.sha256` sidecar are revalidated before publication. All jobs default to read-only repository contents; only the final dependent publication job receives `contents: write`.
+
+Safe maintainer procedure for a future release:
+
+1. Update and review `package.json` through the normal milestone process; do not tag a version whose source and tests are not approved.
+2. Ensure permanent-branch CI is green and the intended commit is checked out.
+3. Create and push one exact stable tag, such as `v3.0.0`, whose numeric portion exactly matches `package.json`.
+4. Monitor the **Official Release** workflow. It refuses malformed/mismatched tags and an existing same-tag release, and publishes only after every prerequisite job succeeds.
+5. Confirm the published release is stable (not draft/prerelease) and contains exactly `CourseMirror-<version>-Setup.exe` and `CourseMirror-<version>-Setup.exe.sha256`. Verify the sidecar before distributing the installer.
+
+Milestone 2C.3 adds the mechanism only. Version remains `2.4.1`; no tag or GitHub Release is created as part of this implementation. Artifacts remain unsigned until the later code-signing milestone, so users must not be instructed to weaken SmartScreen or other Windows protections. Clean-Windows-VM qualification also remains later release-readiness work.
+
 ## Deferred / Later Improvements
 
 The items below are **non-blocking**. They are not required before moving to installer and UI work, and they do not prevent the Windows distribution foundation from being considered complete.

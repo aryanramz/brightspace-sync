@@ -78,6 +78,12 @@ jobs:
       - name: Windows installer lifecycle contract self-test
         run: npm run installer-lifecycle-selftest
 
+      - name: Update-check contract self-test
+        run: npm run update-check-selftest
+
+      - name: Official release-pipeline contract self-test
+        run: npm run release-pipeline-selftest
+
   dependency-security:
     runs-on: ubuntu-latest
     steps:
@@ -182,6 +188,9 @@ jobs:
 
       - name: Build portable Windows application bundle
         run: npm run build:windows-bundle
+
+      - name: Verify compiled update checker without live API access
+        run: npm run update-check-selftest -- --require-built
 
       - name: Verify private runtime and source-checkout independence
         run: npm run windows-bundle-selftest

@@ -1,0 +1,226 @@
+name: Official Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  release-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+      - name: Setup pinned Node.js validation runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.20.0
+      - name: Reject malformed or mismatched release tags
+        run: node scripts/release-validation.mjs --tag "$GITHUB_REF_NAME"
+
+  test:
+    needs: release-contract
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x, 24.20.0]
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Validate stable tag and package version
+        run: node scripts/release-validation.mjs --tag "$GITHUB_REF_NAME"
+
+      - name: Run application validation suite
+        run: |
+          npm run syntax-check
+          npm run selftest
+          npm run publish-selftest
+          npm run lock-selftest
+          npm run runtime-paths-selftest
+          npm run runtime-foundation-selftest
+          npm run desktop-backend-selftest
+          npm run desktop-settings-selftest
+          npm run auth-selftest
+          npm run schedule-selftest
+          npm run school-indexes-selftest
+          npm run deadline-intelligence-selftest
+          npm run asset-index-selftest
+          npm run write-protection-selftest
+          npm run security-selftest
+          npm run installer-foundation-selftest
+          npm run installer-lifecycle-selftest
+          npm run update-check-selftest
+          npm run release-pipeline-selftest
+
+  dependency-security:
+    needs: release-contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.20.0
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  history-security:
+    needs: release-contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full tagged history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.20.0
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Scan full Git history for sensitive material
+        run: npm run history-security-selftest
+
+  windows-release-build:
+    needs: [release-contract, test, dependency-security, history-security]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+
+      - name: Setup pinned Node.js build runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.20.0
+          cache: npm
+
+      - name: Install locked production dependencies without browsers
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Validate stable tag and package version
+        shell: pwsh
+        run: node scripts/release-validation.mjs --tag "$env:GITHUB_REF_NAME"
+
+      - name: Build portable Windows application bundle
+        run: npm run build:windows-bundle
+
+      - name: Verify compiled update checker without live API access
+        run: npm run update-check-selftest -- --require-built
+
+      - name: Verify private runtime and source-checkout independence
+        run: npm run windows-bundle-selftest
+
+      - name: Verify installer foundation and lifecycle contracts
+        run: |
+          npm run installer-foundation-selftest
+          npm run installer-lifecycle-selftest
+
+      - name: Provision verified Inno Setup 7.1.0 x64
+        shell: pwsh
+        run: .\scripts\provision-inno-setup-ci.ps1
+
+      - name: Compile Windows installer
+        run: npm run build:windows-installer
+
+      - name: Validate exact official release artifacts
+        id: release-metadata
+        shell: pwsh
+        run: |
+          node scripts/release-validation.mjs --tag "$env:GITHUB_REF_NAME" --artifacts dist\installer
+          if ($LASTEXITCODE -ne 0) { throw 'Official release artifact validation failed.' }
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $installerPath = Join-Path $PWD "dist\installer\CourseMirror-$version-Setup.exe"
+          $expectedVersion = [Version]$version
+          $actualVersion = [Version](Get-Item -LiteralPath $installerPath).VersionInfo.ProductVersion
+          if ($actualVersion.Major -ne $expectedVersion.Major -or
+              $actualVersion.Minor -ne $expectedVersion.Minor -or
+              $actualVersion.Build -ne $expectedVersion.Build) {
+            throw "Official installer product version mismatch: expected $version, found $actualVersion."
+          }
+          "installer=dist/installer/CourseMirror-$version-Setup.exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "checksum=dist/installer/CourseMirror-$version-Setup.exe.sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload exact verified release payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: coursemirror-official-release
+          path: |
+            ${{ steps.release-metadata.outputs.installer }}
+            ${{ steps.release-metadata.outputs.checksum }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [release-contract, test, dependency-security, history-security, windows-release-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+
+      - name: Setup pinned Node.js publication runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.20.0
+
+      - name: Download verified release payload
+        uses: actions/download-artifact@v4
+        with:
+          name: coursemirror-official-release
+          path: dist/installer
+
+      - name: Revalidate payload and prepare release notes
+        run: node scripts/release-validation.mjs --tag "$GITHUB_REF_NAME" --artifacts dist/installer --write-notes release-notes.md
+
+      - name: Refuse an existing same-tag release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +e
+          existing="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json tagName 2>&1)"
+          view_status=$?
+          set -e
+          if [ "$view_status" -eq 0 ]; then
+            echo "A GitHub Release already exists for $GITHUB_REF_NAME; refusing to replace it."
+            exit 1
+          fi
+
+      - name: Publish stable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          installer="CourseMirror-$version-Setup.exe"
+          checksum="$installer.sha256"
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/installer/$installer" \
+            "dist/installer/$checksum" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --latest \
+            --title "CourseMirror $GITHUB_REF_NAME" \
+            --notes-file release-notes.md

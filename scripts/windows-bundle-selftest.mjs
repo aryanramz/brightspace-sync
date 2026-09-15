@@ -334,6 +334,25 @@ try {
   assert.equal(doctor.stdout.includes(`Mirror: ${mirrorDir}`), true);
   assert.deepEqual(await snapshotTree(portableRoot), before, 'packaged doctor must not modify the application bundle');
 
+  const updateCheckSelfTestFile = path.join(temp, 'update-check-self-test.json');
+  const updateCheckSelfTest = await run(controlPanel, ['--update-check-self-test', updateCheckSelfTestFile], {
+    cwd: unrelatedCwd,
+    env: isolatedEnv,
+    label: 'packaged Windows update-check smoke test'
+  });
+  let updateCheckFailure = '';
+  if (updateCheckSelfTest.code !== 0) {
+    try { updateCheckFailure = await fs.readFile(updateCheckSelfTestFile, 'utf8'); } catch {}
+  }
+  assert.equal(updateCheckSelfTest.code, 0, `${updateCheckSelfTest.stdout}\n${updateCheckSelfTest.stderr}\n${updateCheckFailure}`);
+  const updateCheckResult = JSON.parse(await fs.readFile(updateCheckSelfTestFile, 'utf8'));
+  assert.equal(updateCheckResult.schemaVersion, 1);
+  for (const [name, passed] of Object.entries(updateCheckResult).filter(([name]) => name !== 'schemaVersion')) {
+    assert.equal(passed, true, `packaged update-check assertion failed: ${name}`);
+  }
+  assert.deepEqual(await snapshotTree(portableRoot), before, 'packaged update-check tests must not modify the application bundle');
+  console.log('Packaged Windows update checker: PASS (private runtime data, no live API calls)');
+
   const controlPanelSelfTestFile = path.join(temp, 'control-panel-self-test.json');
   const controlPanelEnv = { ...isolatedEnv };
   delete controlPanelEnv.COURSEMIRROR_DEV_BUNDLE_ROOT;

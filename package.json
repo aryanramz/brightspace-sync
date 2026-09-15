@@ -42,6 +42,8 @@
     "windows-bundle-selftest": "node scripts/windows-bundle-selftest.mjs",
     "installer-foundation-selftest": "node scripts/installer-foundation-selftest.mjs",
     "installer-lifecycle-selftest": "node scripts/installer-lifecycle-selftest.mjs",
+    "update-check-selftest": "node scripts/update-check-selftest.mjs",
+    "release-pipeline-selftest": "node scripts/release-pipeline-selftest.mjs",
     "security-selftest": "node src/security-selftest.mjs"
   },
   "dependencies": {

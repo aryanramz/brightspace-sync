@@ -21,6 +21,8 @@ const SOURCE_FILES = [
   'Program.cs',
   'ScheduledRunCommand.cs',
   'SetupSettingsForm.cs',
+  'UpdateCheckSelfTest.cs',
+  'UpdateCheckService.cs',
   'WindowsTaskScheduler.cs',
   path.join('..', 'Shared', 'CourseMirrorProcessIdentity.cs'),
   path.join('..', 'Shared', 'WindowsCredentialStore.cs'),
@@ -84,7 +86,7 @@ async function build() {
   await fs.rm(OUTPUT_DIR, { recursive: true, force: true });
   await fs.mkdir(OUTPUT_DIR, { recursive: true });
 
-  const references = ['System.dll', 'System.Core.dll', 'System.Drawing.dll', 'System.Web.Extensions.dll', 'System.Windows.Forms.dll', 'Microsoft.CSharp.dll']
+  const references = ['System.dll', 'System.Core.dll', 'System.Drawing.dll', 'System.Net.Http.dll', 'System.Web.Extensions.dll', 'System.Windows.Forms.dll', 'Microsoft.CSharp.dll']
     .map(name => `/reference:${path.join(frameworkDir, name)}`);
   const generatedVersion = await createTemporaryAssemblyVersionSource(ROOT, 'control-panel');
   try {

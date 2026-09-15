@@ -36,6 +36,9 @@ namespace CourseMirror.ControlPanel
             if (args.Length == 2 && args[0] == "--self-test")
                 return ControlPanelSelfTest.Run(args[1]);
 
+            if (args.Length == 2 && args[0] == "--update-check-self-test")
+                return UpdateCheckSelfTest.Run(args[1]);
+
             bool ownsMutex;
             bool ownsLegacyMutex;
             using (var singleInstance = new Mutex(true, MutexName, out ownsMutex))
