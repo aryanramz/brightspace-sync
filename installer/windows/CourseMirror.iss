@@ -522,7 +522,10 @@ begin
       ResultCode) or (ResultCode <> MaintenanceSuccess) then
     begin
       WriteLifecycleFailureLog('uninstall', 'schedule-remove', 'schedule-remove-failed');
-      MsgBox('CourseMirror scheduling could not be removed. Reinstalling and uninstalling again can repair it.', mbError, MB_OK);
+      RaiseException(
+        'CourseMirror could not remove its scheduled sync task, so uninstall was stopped. ' +
+        'No CourseMirror application or private data was removed. ' +
+        'Try again after checking Windows Task Scheduler.');
     end;
 
     if RemovePrivateDataRequested then

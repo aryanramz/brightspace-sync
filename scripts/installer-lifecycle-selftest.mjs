@@ -100,6 +100,27 @@ assert.match(installer, /result=failed/);
 assert.doesNotMatch(installer, /result=success/);
 assert.match(workflow, /npm run installer-lifecycle-selftest/);
 
+const uninstallStep = installer.slice(
+  installer.indexOf('procedure CurUninstallStepChanged'),
+  installer.indexOf('procedure DeinitializeUninstall')
+);
+const scheduleRemoval = uninstallStep.indexOf("'--installer-remove-schedule'");
+const scheduleFailureLog = uninstallStep.indexOf("WriteLifecycleFailureLog('uninstall', 'schedule-remove', 'schedule-remove-failed')");
+const scheduleFailureAbort = uninstallStep.indexOf('RaiseException(', scheduleFailureLog);
+const privateDataDecision = uninstallStep.indexOf('if RemovePrivateDataRequested then');
+const credentialRemoval = uninstallStep.indexOf("'--installer-remove-credential'");
+const privateDataRemoval = uninstallStep.indexOf("'--installer-remove-private-data'");
+assert(scheduleRemoval >= 0 && scheduleFailureLog > scheduleRemoval,
+  'managed schedule removal must run before uninstall can progress');
+assert(scheduleFailureAbort > scheduleFailureLog && scheduleFailureAbort < privateDataDecision,
+  'schedule-removal failure must abort before any private-data decision');
+assert(privateDataDecision < credentialRemoval && credentialRemoval < privateDataRemoval,
+  'credential/private-data cleanup must remain unreachable after schedule-removal abort');
+assert.match(uninstallStep, /scheduled sync task, so uninstall was stopped/);
+assert.match(uninstallStep, /No CourseMirror application or private data was removed/);
+assert.doesNotMatch(uninstallStep, /scheduling could not be removed\. Reinstalling and uninstalling again can repair it/,
+  'task-removal failure cannot remain a warning-only path');
+
 function run(command, args, { cwd = ROOT, env = process.env } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env, windowsHide: true });
